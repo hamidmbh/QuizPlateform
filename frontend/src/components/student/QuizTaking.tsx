@@ -198,11 +198,7 @@ export function QuizTaking() {
         return;
       }
       
-      // If mutation is already in progress, don't trigger again (wait for it to complete)
-      if (submitQuizMutation.isPending) {
-        console.log('⏳ Submission already in progress, skipping auto-submit trigger');
-        return;
-      }
+      if (submitQuizMutation.isPending) return;
       
       // Set flag IMMEDIATELY before any async operations to prevent race conditions
       autoSubmitAttemptedRef.current = true;
@@ -230,46 +226,17 @@ export function QuizTaking() {
         }
       });
       
-      console.log('📋 Normalized answers map:', Array.from(normalizedAnswers.entries()));
-      console.log('📋 Raw answers object:', answers);
-      console.log('📋 All answer keys:', Object.keys(answers));
-      console.log('📋 All answer entries:', Object.entries(answers));
-      
-      // Iterate through all questions and collect answers
-      quiz.questions.forEach(q => {
+      // Collect answers for each question (unanswered = not in payload = 0 points on backend)
+      quiz.questions.forEach((q) => {
         const questionIdStr = String(q.id);
-        // Try normalized map first, then fallback to direct access with both formats
-        // Check the raw answers object directly since normalization might filter empty arrays
-        let selectedOptions = normalizedAnswers.get(questionIdStr);
-        if (!selectedOptions) {
-          // Try direct access with multiple formats - check raw answers object
-          selectedOptions = answers[questionIdStr] 
-            || answers[q.id] 
-            || answers[Number(q.id)]
-            || answers[String(q.id)]
-            || [];
-        }
-        
-        // Log what we found
-        if (selectedOptions && selectedOptions.length > 0) {
-          console.log(`✅ Found ${selectedOptions.length} answer(s) for question ${questionIdStr}:`, selectedOptions);
-        } else {
-          // Check if the key exists but array is empty
-          const keyExists = answers[questionIdStr] !== undefined || answers[q.id] !== undefined;
-          if (keyExists) {
-            const emptyValue = answers[questionIdStr] || answers[q.id];
-            console.log(`⚠️ Answer key exists for question ${questionIdStr} but array is empty:`, emptyValue);
-            console.log(`   This means the answer was cleared or never properly set.`);
-          } else {
-            console.log(`❌ No answer key found for question ${questionIdStr} (tried: ${questionIdStr}, ${q.id}, ${Number(q.id)})`);
-            // Debug: show what keys exist vs what we're looking for
-            console.log(`   Available keys:`, Object.keys(answers));
-            console.log(`   Looking for:`, questionIdStr, `(type: ${typeof questionIdStr})`);
-            console.log(`   Question ID types:`, { str: questionIdStr, num: q.id, numStr: String(q.id) });
-          }
-        }
-        
-        selectedOptions.forEach(optionId => {
+        let selectedOptions =
+          normalizedAnswers.get(questionIdStr) ??
+          answers[questionIdStr] ??
+          answers[q.id] ??
+          answers[Number(q.id)] ??
+          [];
+
+        selectedOptions.forEach((optionId) => {
           if (optionId) {
             answersToSubmit.push({
               questionId: questionIdStr,
@@ -279,110 +246,66 @@ export function QuizTaking() {
         });
       });
       
-      // Also check if there are any answers in the answers object that weren't matched
-      const allAnswerKeys = Array.from(normalizedAnswers.keys());
-      const matchedQuestionIds = quiz.questions.map(q => String(q.id));
-      const unmatchedKeys = allAnswerKeys.filter(key => !matchedQuestionIds.includes(key));
-      if (unmatchedKeys.length > 0) {
-        console.warn('⚠️ Found answers with unmatched question IDs:', unmatchedKeys);
-        // Try to submit these anyway
-        unmatchedKeys.forEach(key => {
-          const selectedOptions = normalizedAnswers.get(key) || [];
-          selectedOptions.forEach(optionId => {
-            if (optionId) {
-              answersToSubmit.push({
-                questionId: key,
-                optionId: String(optionId),
-              });
-            }
-          });
+      const matchedQuestionIds = quiz.questions.map((q) => String(q.id));
+      const unmatchedKeys = Array.from(normalizedAnswers.keys()).filter((key) => !matchedQuestionIds.includes(key));
+      unmatchedKeys.forEach((key) => {
+        const selectedOptions = normalizedAnswers.get(key) ?? [];
+        selectedOptions.forEach((optionId) => {
+          if (optionId) {
+            answersToSubmit.push({ questionId: key, optionId: String(optionId) });
+          }
         });
-      }
-      
-      console.log('⏰ Time expired! Auto-submitting quiz...', {
-        timeLeft,
-        isFinished,
-        hasAutoSubmitted,
-        quizId: quiz.id,
-        submissionId: submission.id,
-        answersObject: answers,
-        answersKeys: Object.keys(answers),
-        answersEntries: Object.entries(answers),
-        normalizedAnswersMap: Array.from(normalizedAnswers.entries()),
-        quizQuestionIds: quiz.questions.map(q => ({ id: q.id, idStr: String(q.id), idNum: Number(q.id) })),
-        answersCount: Object.keys(answers).length,
-        answersToSubmitCount: answersToSubmit.length,
-        isPending: submitQuizMutation.isPending
       });
-      
-      console.log('📤 Submitting', answersToSubmit.length, 'answer(s)...', answersToSubmit);
-      
-      // Submit even if no answers (time expired)
+
+      // Submit when time expired; unanswered questions are not in payload → 0 points on backend
       submitQuizMutation.mutate(answersToSubmit, {
-        onError: (error) => {
-          console.error('❌ Auto-submit failed:', error);
-          // Reset flags on error so user can try again
+        onError: () => {
           autoSubmitAttemptedRef.current = false;
           setHasAutoSubmitted(false);
         },
-        onSuccess: () => {
-          console.log('✅ Auto-submit successful!');
-        }
       });
     }
   }, [timeLeft, expiresAt, isFinished, hasAutoSubmitted, quiz, submission, answers]);
 
-  const handleToggleOption = (optionId: string) => {
+  /** Set option selected state (add or remove) - use this to avoid double-toggle from checkbox + div click */
+  const handleOptionChange = (optionId: string, selected: boolean) => {
     if (!quiz || isFinished || timeLeft <= 0) return;
     const question = quiz.questions[currentQuestion];
     if (!question) return;
-    
-    // Use string ID consistently to avoid type mismatch issues
+
     const questionIdStr = String(question.id);
-    // Try both formats when reading to handle existing data
-    const currentAnswers = answers[questionIdStr] || answers[question.id] || [];
-    
-    const newAnswers = currentAnswers.includes(optionId)
-      ? currentAnswers.filter(id => id !== optionId)
-      : [...currentAnswers, optionId];
-    
-    console.log(`📝 Toggling option ${optionId} for question ${questionIdStr}:`, {
-      currentAnswers,
-      newAnswers,
-      questionId: question.id,
-      questionIdStr
-    });
-    
+    const currentAnswers = answers[questionIdStr] ?? answers[String(question.id)] ?? [];
+
+    const optionIdStr = String(optionId);
+    const newAnswers = selected
+      ? (currentAnswers.includes(optionIdStr) ? currentAnswers : [...currentAnswers, optionIdStr])
+      : currentAnswers.filter((id) => String(id) !== optionIdStr);
+
     setSelectedOptionIds(newAnswers);
-    setAnswers(prev => {
-      const updated = { ...prev };
-      // Store with string ID for consistency
-      updated[questionIdStr] = newAnswers;
-      // Remove number format if it exists to avoid duplicates
-      if (question.id !== questionIdStr && updated[question.id]) {
-        delete updated[question.id];
-      }
-      console.log('📝 Updated answers object:', updated);
-      return updated;
-    });
+    setAnswers((prev) => ({
+      ...prev,
+      [questionIdStr]: newAnswers,
+    }));
   };
 
   const handleNextQuestion = () => {
     if (currentQuestion < (quiz?.questions.length || 0) - 1) {
-      setCurrentQuestion(prev => prev + 1);
+      setCurrentQuestion((prev) => prev + 1);
       const nextQuestion = quiz?.questions[currentQuestion + 1];
       if (nextQuestion) {
-        setSelectedOptionIds(answers[nextQuestion.id] || []);
+        const nextIdStr = String(nextQuestion.id);
+        setSelectedOptionIds(answers[nextIdStr] ?? answers[nextQuestion.id] ?? []);
       }
     }
   };
 
   const handlePrevQuestion = () => {
     if (currentQuestion > 0) {
-      setCurrentQuestion(prev => prev - 1);
+      setCurrentQuestion((prev) => prev - 1);
       const prevQuestion = quiz?.questions[currentQuestion - 1];
       if (prevQuestion) {
-        setSelectedOptionIds(answers[prevQuestion.id] || []);
+        const prevIdStr = String(prevQuestion.id);
+        setSelectedOptionIds(answers[prevIdStr] ?? answers[prevQuestion.id] ?? []);
       }
     }
   };
@@ -424,11 +347,12 @@ export function QuizTaking() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Update selected options when question changes
+  // Sync selected options display when question changes
   useEffect(() => {
-    if (quiz && quiz.questions[currentQuestion]) {
+    if (quiz?.questions[currentQuestion]) {
       const question = quiz.questions[currentQuestion];
-      setSelectedOptionIds(answers[question.id] || []);
+      const questionIdStr = String(question.id);
+      setSelectedOptionIds(answers[questionIdStr] ?? answers[question.id] ?? []);
     }
   }, [currentQuestion, quiz, answers]);
 
@@ -575,17 +499,22 @@ export function QuizTaking() {
             </CardHeader>
             <CardContent className="space-y-3">
               {question.options.map((option: Option) => {
-                const isSelected = selectedOptionIds.includes(option.id);
+                const optionIdStr = String(option.id);
+                const isSelected =
+                  selectedOptionIds.includes(optionIdStr) ||
+                  selectedOptionIds.some((id) => String(id) === optionIdStr);
                 return (
                   <div
                     key={option.id}
                     onClick={(e) => {
-                      // Only handle click if not clicking on checkbox (checkbox handles its own)
-                      if (!(e.target as HTMLElement).closest('[role="checkbox"]')) {
-                        if (!isFinished && timeLeft > 0) {
-                          console.log('🖱️ Option div clicked (outside checkbox):', option.id);
-                          handleToggleOption(option.id);
-                        }
+                      const target = e.target as HTMLElement;
+                      if (target.closest('button[role="checkbox"]')) {
+                        return;
+                      }
+                      if (!isFinished && timeLeft > 0) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleOptionChange(optionIdStr, !isSelected);
                       }
                     }}
                     className={`w-full p-4 rounded-xl border-2 text-left transition-all ${
@@ -597,11 +526,12 @@ export function QuizTaking() {
                     <div className="flex items-center gap-3">
                       <Checkbox
                         checked={isSelected}
-                        onCheckedChange={() => {
-                          console.log('☑️ Checkbox toggled for option:', option.id);
-                          handleToggleOption(option.id);
+                        onCheckedChange={(checked) => {
+                          if (isFinished || timeLeft <= 0) return;
+                          handleOptionChange(optionIdStr, checked === true);
                         }}
                         disabled={isFinished || timeLeft <= 0}
+                        onClick={(e) => e.stopPropagation()}
                       />
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold ${
                         isSelected
@@ -661,14 +591,15 @@ export function QuizTaking() {
         {/* Question indicators */}
         <div className="flex justify-center gap-2 mt-8 flex-wrap">
           {quiz.questions.map((q, index) => {
-            const isAnswered = answers[q.id] && answers[q.id].length > 0;
+            const qIdStr = String(q.id);
+            const isAnswered = (answers[qIdStr] ?? answers[q.id])?.length > 0;
             const isCurrent = index === currentQuestion;
             return (
               <button
                 key={q.id}
                 onClick={() => {
                   setCurrentQuestion(index);
-                  setSelectedOptionIds(answers[q.id] || []);
+                  setSelectedOptionIds(answers[qIdStr] ?? answers[q.id] ?? []);
                 }}
                 className={`w-3 h-3 rounded-full transition-all ${
                   isCurrent
