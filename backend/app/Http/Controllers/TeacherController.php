@@ -93,17 +93,25 @@ class TeacherController extends Controller
         }
 
         $quizzes = Quiz::where('created_by', $user->id)
-            ->with(['class', 'questions.options'])
+            ->with(['classes', 'questions.options'])
             ->get();
 
-        return response()->json($quizzes);
+        // Transform quizzes to include classIds in the response
+        $quizzesArray = $quizzes->map(function ($quiz) {
+            $quizArray = $quiz->toArray();
+            // Add classIds array for easier frontend consumption
+            $quizArray['classIds'] = $quiz->classes->pluck('id')->map(fn($id) => (string)$id)->toArray();
+            return $quizArray;
+        });
+
+        return response()->json($quizzesArray);
     }
 
     /**
-     * Create a quiz for a class
-     * POST /api/classes/{id}/quizzes
+     * Create a quiz for multiple classes
+     * POST /api/quizzes
      */
-    public function createQuiz(Request $request, string $id): JsonResponse
+    public function createQuiz(Request $request): JsonResponse
     {
         $user = $request->user();
 
@@ -111,16 +119,14 @@ class TeacherController extends Controller
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $class = ClassModel::where('id', $id)
-            ->where('teacher_id', $user->id)
-            ->firstOrFail();
-
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
             'durationMinutes' => 'required|integer|min:1|max:180',
             'openAt' => 'required|date',
             'closeAt' => 'required|date|after:openAt',
+            'classIds' => 'required|array|min:1',
+            'classIds.*' => 'required|exists:classes,id',
             'questions' => 'required|array|min:1',
             'questions.*.text' => 'required|string',
             'questions.*.options' => 'required|array|min:2',
@@ -128,17 +134,26 @@ class TeacherController extends Controller
             'questions.*.options.*.isCorrect' => 'required|boolean',
         ]);
 
+        // Verify all classes belong to the teacher
+        $teacherClassIds = ClassModel::where('teacher_id', $user->id)->pluck('id')->toArray();
+        $invalidClassIds = array_diff($validated['classIds'], $teacherClassIds);
+        if (!empty($invalidClassIds)) {
+            return response()->json(['message' => 'One or more classes do not belong to you'], 403);
+        }
+
         DB::beginTransaction();
         try {
             $quiz = Quiz::create([
                 'title' => $validated['title'],
                 'description' => $validated['description'] ?? null,
-                'class_id' => $class->id,
                 'created_by' => $user->id,
                 'duration_minutes' => $validated['durationMinutes'],
                 'open_at' => $validated['openAt'],
                 'close_at' => $validated['closeAt'],
             ]);
+
+            // Attach quiz to multiple classes
+            $quiz->classes()->attach($validated['classIds']);
 
             foreach ($validated['questions'] as $index => $questionData) {
                 $question = Question::create([
@@ -159,12 +174,110 @@ class TeacherController extends Controller
 
             DB::commit();
 
-            $quiz->load(['questions.options']);
+            $quiz->load(['classes', 'questions.options']);
+            
+            // Transform quiz to include classIds in the response
+            $quizArray = $quiz->toArray();
+            $quizArray['classIds'] = $quiz->classes->pluck('id')->map(fn($id) => (string)$id)->toArray();
 
-            return response()->json($quiz, 201);
+            return response()->json($quizArray, 201);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['message' => 'Failed to create quiz: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Update an existing quiz
+     * PUT /api/quizzes/{id}
+     */
+    public function updateQuiz(Request $request, string $id): JsonResponse
+    {
+        $user = $request->user();
+
+        if (!$user->isTeacher()) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $quiz = Quiz::where('id', $id)
+            ->where('created_by', $user->id)
+            ->firstOrFail();
+
+        $validated = $request->validate([
+            'title' => 'required|string|max:255',
+            'description' => 'nullable|string',
+            'durationMinutes' => 'required|integer|min:1|max:180',
+            'classIds' => 'required|array|min:1',
+            'classIds.*' => 'required|exists:classes,id',
+            'openAt' => 'required|date',
+            'closeAt' => 'required|date|after:openAt',
+            'questions' => 'required|array|min:1',
+            'questions.*.id' => 'nullable|exists:questions,id',
+            'questions.*.text' => 'required|string',
+            'questions.*.options' => 'required|array|min:2',
+            'questions.*.options.*.id' => 'nullable|exists:options,id',
+            'questions.*.options.*.text' => 'required|string',
+            'questions.*.options.*.isCorrect' => 'required|boolean',
+        ]);
+
+        // Verify all classes belong to the teacher
+        $teacherClassIds = ClassModel::where('teacher_id', $user->id)->pluck('id')->toArray();
+        $invalidClassIds = array_diff($validated['classIds'], $teacherClassIds);
+        if (!empty($invalidClassIds)) {
+            return response()->json(['message' => 'One or more classes do not belong to you'], 403);
+        }
+
+        DB::beginTransaction();
+        try {
+            $quiz->update([
+                'title' => $validated['title'],
+                'description' => $validated['description'] ?? null,
+                'duration_minutes' => $validated['durationMinutes'],
+                'open_at' => $validated['openAt'],
+                'close_at' => $validated['closeAt'],
+            ]);
+
+            // Sync quiz classes (replace existing with new ones)
+            $quiz->classes()->sync($validated['classIds']);
+
+            $existingQuestionIds = $quiz->questions->pluck('id')->toArray();
+            $updatedQuestionIds = [];
+
+            foreach ($validated['questions'] as $index => $questionData) {
+                $question = $quiz->questions()->updateOrCreate(
+                    ['id' => $questionData['id'] ?? null],
+                    ['text' => $questionData['text'], 'order' => $index]
+                );
+                $updatedQuestionIds[] = $question->id;
+
+                $existingOptionIds = $question->options->pluck('id')->toArray();
+                $updatedOptionIds = [];
+
+                foreach ($questionData['options'] as $optIndex => $optionData) {
+                    $option = $question->options()->updateOrCreate(
+                        ['id' => $optionData['id'] ?? null],
+                        ['text' => $optionData['text'], 'is_correct' => $optionData['isCorrect'], 'order' => $optIndex]
+                    );
+                    $updatedOptionIds[] = $option->id;
+                }
+                // Delete options that were removed
+                $question->options()->whereNotIn('id', $updatedOptionIds)->delete();
+            }
+            // Delete questions that were removed
+            $quiz->questions()->whereNotIn('id', $updatedQuestionIds)->delete();
+
+            DB::commit();
+
+            $quiz->load(['classes', 'questions.options']);
+            
+            // Transform quiz to include classIds in the response
+            $quizArray = $quiz->toArray();
+            $quizArray['classIds'] = $quiz->classes->pluck('id')->map(fn($id) => (string)$id)->toArray();
+
+            return response()->json($quizArray);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'Failed to update quiz: ' . $e->getMessage()], 500);
         }
     }
 

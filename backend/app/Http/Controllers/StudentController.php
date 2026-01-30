@@ -32,10 +32,12 @@ class StudentController extends Controller
 
         $now = Carbon::now();
 
-        // Get all quizzes for the student's class (including past ones to show late status)
-        $quizzes = Quiz::where('class_id', $user->class_id)
+        // Get all quizzes assigned to the student's class (including past ones to show late status)
+        $quizzes = Quiz::whereHas('classes', function ($query) use ($user) {
+                $query->where('classes.id', $user->class_id);
+            })
             ->where('open_at', '<=', $now) // Only show quizzes that have opened
-            ->with(['questions.options'])
+            ->with(['questions.options', 'classes'])
             ->get();
 
         // Add submission status to each quiz
@@ -67,6 +69,8 @@ class StudentController extends Controller
         $quizzesArray = $quizzes->map(function ($quiz) {
             $quizArray = $quiz->toArray();
             $quizArray['submissionStatus'] = $quiz->submissionStatus;
+            // Add classIds array for easier frontend consumption
+            $quizArray['classIds'] = $quiz->classes->pluck('id')->map(fn($id) => (string)$id)->toArray();
             return $quizArray;
         });
 
@@ -86,7 +90,9 @@ class StudentController extends Controller
         }
 
         $quiz = Quiz::where('id', $id)
-            ->where('class_id', $user->class_id)
+            ->whereHas('classes', function ($query) use ($user) {
+                $query->where('classes.id', $user->class_id);
+            })
             ->firstOrFail();
 
         // Check if quiz is open
@@ -159,7 +165,9 @@ class StudentController extends Controller
         }
 
         $quiz = Quiz::where('id', $id)
-            ->where('class_id', $user->class_id)
+            ->whereHas('classes', function ($query) use ($user) {
+                $query->where('classes.id', $user->class_id);
+            })
             ->firstOrFail();
 
         $submission = Submission::where('quiz_id', $quiz->id)

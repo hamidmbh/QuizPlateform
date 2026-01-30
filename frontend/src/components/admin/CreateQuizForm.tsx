@@ -44,7 +44,7 @@ export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [durationMinutes, setDurationMinutes] = useState(15);
-  const [selectedClassId, setSelectedClassId] = useState<string>('');
+  const [selectedClassIds, setSelectedClassIds] = useState<string[]>([]);
   const [openAt, setOpenAt] = useState('');
   const [closeAt, setCloseAt] = useState('');
   const [questions, setQuestions] = useState<QuestionForm[]>([
@@ -63,8 +63,8 @@ export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
   // Create quiz mutation
   const createQuizMutation = useMutation({
     mutationFn: async (quizData: any) => {
-      if (!selectedClassId) throw new Error('Classe requise');
-      return await teacherApi.createQuiz(selectedClassId, quizData);
+      if (selectedClassIds.length === 0) throw new Error('Au moins une classe est requise');
+      return await teacherApi.createQuiz({ ...quizData, classIds: selectedClassIds });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['quizzes'] });
@@ -72,7 +72,7 @@ export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
       setTitle('');
       setDescription('');
       setDurationMinutes(15);
-      setSelectedClassId('');
+      setSelectedClassIds([]);
       setOpenAt('');
       setCloseAt('');
       setQuestions([{ 
@@ -152,9 +152,9 @@ export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
     if (!title.trim()) {
       newErrors.push('Le titre est requis');
     }
-    if (!selectedClassId) {
-      newErrors.push('Sélectionnez une classe');
-    }
+            if (selectedClassIds.length === 0) {
+              newErrors.push('Sélectionnez au moins une classe');
+            }
     if (durationMinutes < 1 || durationMinutes > 180) {
       newErrors.push('Le temps limite doit être entre 1 et 180 minutes');
     }
@@ -279,26 +279,42 @@ export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
               rows={2}
             />
           </div>
-          <div className="grid sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="classId">Classe assignée *</Label>
-              <Select value={selectedClassId} onValueChange={setSelectedClassId}>
-                <SelectTrigger id="classId">
-                  <SelectValue placeholder="Sélectionner une classe" />
-                </SelectTrigger>
-                <SelectContent>
-                  {isLoadingClasses ? (
-                    <SelectItem value="loading" disabled>Chargement...</SelectItem>
-                  ) : classes.length === 0 ? (
-                    <SelectItem value="none" disabled>Aucune classe disponible</SelectItem>
-                  ) : (
-                    classes.map(c => (
-                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
+          <div className="space-y-2">
+            <Label>Classes assignées *</Label>
+            <div className="border rounded-lg p-4 space-y-2 max-h-48 overflow-y-auto">
+              {isLoadingClasses ? (
+                <p className="text-sm text-muted-foreground">Chargement...</p>
+              ) : classes.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Aucune classe disponible</p>
+              ) : (
+                classes.map(c => (
+                  <div key={c.id} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`class-${c.id}`}
+                      checked={selectedClassIds.includes(c.id)}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setSelectedClassIds([...selectedClassIds, c.id]);
+                        } else {
+                          setSelectedClassIds(selectedClassIds.filter(id => id !== c.id));
+                        }
+                      }}
+                    />
+                    <Label
+                      htmlFor={`class-${c.id}`}
+                      className="text-sm font-normal cursor-pointer flex-1"
+                    >
+                      {c.name}
+                    </Label>
+                  </div>
+                ))
+              )}
             </div>
+            {selectedClassIds.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {selectedClassIds.length} classe(s) sélectionnée(s)
+              </p>
+            )}
           </div>
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="space-y-2">

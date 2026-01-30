@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ClassModel extends Model
@@ -35,10 +36,11 @@ class ClassModel extends Model
     }
 
     /**
-     * Get the quizzes for the class.
+     * Get the quizzes assigned to this class.
      */
-    public function quizzes(): HasMany
+    public function quizzes(): BelongsToMany
     {
-        return $this->hasMany(Quiz::class, 'class_id');
+        return $this->belongsToMany(Quiz::class, 'quiz_class', 'class_id', 'quiz_id')
+            ->withTimestamps();
     }
 }

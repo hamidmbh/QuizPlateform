@@ -40,26 +40,68 @@ const QuizContext = createContext<QuizContextType | undefined>(undefined);
 
 // Helper to map backend quiz to frontend format
 const mapQuizFromBackend = (backendQuiz: any): Quiz => {
+  // Extract class IDs from the classes relationship
+  let classIds: string[] = [];
+  
+  // Priority 1: Use classIds array if provided directly by backend (preferred)
+  if (backendQuiz.classIds && Array.isArray(backendQuiz.classIds) && backendQuiz.classIds.length > 0) {
+    classIds = backendQuiz.classIds.map((id: any) => String(id));
+  }
+  // Priority 2: Extract from classes relationship array
+  else if (backendQuiz.classes && Array.isArray(backendQuiz.classes) && backendQuiz.classes.length > 0) {
+    classIds = backendQuiz.classes
+      .map((c: any) => {
+        // Handle both direct ID and pivot table ID
+        const id = c.id || c.pivot?.class_id || c.pivot?.classId;
+        return id ? String(id) : null;
+      })
+      .filter((id: string | null): id is string => id !== null);
+  }
+  // Priority 3: Legacy support: single classId (for old quizzes)
+  else if (backendQuiz.classId || backendQuiz.class_id) {
+    classIds = [String(backendQuiz.classId || backendQuiz.class_id)];
+  }
+  
+  // If still no classIds found, log a warning (but don't break)
+  if (classIds.length === 0) {
+    console.warn('Quiz has no classes assigned:', {
+      quizId: backendQuiz.id,
+      quizTitle: backendQuiz.title,
+      classes: backendQuiz.classes,
+      classIds: backendQuiz.classIds,
+    });
+  }
+
   return {
-    id: backendQuiz.id,
+    id: String(backendQuiz.id),
     title: backendQuiz.title,
     description: backendQuiz.description || '',
-    questions: backendQuiz.questions || [],
-    durationMinutes: backendQuiz.durationMinutes,
-    classId: backendQuiz.classId || backendQuiz.class_id,
-    openAt: backendQuiz.openAt || backendQuiz.open_at,
-    closeAt: backendQuiz.closeAt || backendQuiz.close_at,
-    createdBy: backendQuiz.createdBy || backendQuiz.created_by,
-    createdAt: backendQuiz.createdAt || backendQuiz.created_at,
+    questions: (backendQuiz.questions || []).map((q: any) => ({
+      id: String(q.id),
+      text: q.text,
+      options: (q.options || []).map((o: any) => ({
+        id: String(o.id),
+        text: o.text,
+        isCorrect: o.is_correct || o.isCorrect || false,
+      })),
+    })),
+    durationMinutes: backendQuiz.duration_minutes || backendQuiz.durationMinutes,
+    classIds: classIds,
+    openAt: backendQuiz.open_at || backendQuiz.openAt,
+    closeAt: backendQuiz.close_at || backendQuiz.closeAt,
+    createdBy: String(backendQuiz.created_by || backendQuiz.createdBy),
+    createdAt: backendQuiz.created_at || backendQuiz.createdAt,
+    // Legacy support
+    classId: classIds.length > 0 ? classIds[0] : undefined,
   };
 };
 
 // Helper to map backend class to frontend format
 const mapClassFromBackend = (backendClass: any): Class => {
   return {
-    id: backendClass.id,
+    id: String(backendClass.id), // Ensure ID is always a string for consistent comparison
     name: backendClass.name,
-    teacherId: backendClass.teacherId || backendClass.teacher_id,
+    teacherId: String(backendClass.teacherId || backendClass.teacher_id),
     students: backendClass.students?.map(mapUserFromBackend) || [],
     students_count: backendClass.students_count || (Array.isArray(backendClass.students) ? backendClass.students.length : 0),
   };
@@ -108,7 +150,10 @@ export function QuizProvider({ children }: { children: React.ReactNode }) {
       if (user?.role === 'TEACHER') {
         try {
           const quizzes = await teacherApi.getQuizzes();
-          return quizzes.map(mapQuizFromBackend);
+          console.log('📥 Raw quizzes from API:', quizzes);
+          const mappedQuizzes = quizzes.map(mapQuizFromBackend);
+          console.log('📤 Mapped quizzes:', mappedQuizzes);
+          return mappedQuizzes;
         } catch (error) {
           console.error('Failed to fetch quizzes:', error);
           return [];
@@ -201,7 +246,10 @@ export function QuizProvider({ children }: { children: React.ReactNode }) {
   };
 
   const getQuizzesForStudent = (studentId: string, classId: string) => {
-    return quizzesData.filter(q => q.classId === classId);
+    return quizzesData.filter(q => 
+      (q.classIds && q.classIds.includes(classId)) || 
+      (q.classId === classId) // Legacy support
+    );
   };
 
   const getAttemptsByStudent = (studentId: string) => {

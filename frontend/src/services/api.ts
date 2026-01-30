@@ -139,13 +139,14 @@ export const teacherApi = {
   },
 
   /**
-   * Create a quiz for a class
-   * POST /classes/:id/quizzes
+   * Create a quiz for multiple classes
+   * POST /quizzes
    */
-  createQuiz: async (classId: string, quizData: {
+  createQuiz: async (quizData: {
     title: string;
     description: string;
     durationMinutes: number;
+    classIds: string[]; // Array of class IDs
     openAt: string;
     closeAt: string;
     questions: Array<{
@@ -153,7 +154,7 @@ export const teacherApi = {
       options: Array<{ text: string; isCorrect: boolean }>;
     }>;
   }): Promise<any> => {
-    return apiRequest<any>(`/classes/${classId}/quizzes`, {
+    return apiRequest<any>('/quizzes', {
       method: 'POST',
       body: JSON.stringify(quizData),
     });
@@ -165,6 +166,33 @@ export const teacherApi = {
    */
   getQuizzes: async (): Promise<any[]> => {
     return apiRequest<any[]>('/quizzes');
+  },
+
+  /**
+   * Update an existing quiz
+   * PUT /quizzes/:id
+   */
+  updateQuiz: async (quizId: string, quizData: {
+    title: string;
+    description: string;
+    durationMinutes: number;
+    classIds: string[]; // Array of class IDs
+    openAt: string;
+    closeAt: string;
+    questions: Array<{
+      id?: string;
+      text: string;
+      options: Array<{
+        id?: string;
+        text: string;
+        isCorrect: boolean;
+      }>;
+    }>;
+  }): Promise<any> => {
+    return apiRequest<any>(`/quizzes/${quizId}`, {
+      method: 'PUT',
+      body: JSON.stringify(quizData),
+    });
   },
 
   /**

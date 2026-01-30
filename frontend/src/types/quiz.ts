@@ -32,13 +32,13 @@ export interface Quiz {
   description: string;
   questions: Question[];
   durationMinutes: number; // Backend uses durationMinutes
-  classId: string; // Backend uses single classId (one quiz per class)
+  classIds: string[]; // Array of class IDs (quiz can be assigned to multiple classes)
   openAt: string; // ISO date string
   closeAt: string; // ISO date string
   createdBy: string;
   createdAt: string;
   // Legacy support - will be removed
-  classIds?: string[];
+  classId?: string;
   timeLimit?: number;
 }
 

@@ -50,8 +50,19 @@ export function QuizList({ onEditQuiz }: QuizListProps) {
     );
   }
 
-  const getClassName = (classId: string) => {
-    return classes.find(c => c.id === classId)?.name || 'Classe inconnue';
+  const getClassNames = (classIds: string[]) => {
+    if (!classIds || classIds.length === 0) {
+      // Legacy support: try classId
+      return [];
+    }
+    return classIds
+      .map(id => {
+        // Convert both to strings for comparison to handle type mismatches
+        const classIdStr = String(id);
+        const foundClass = classes.find(c => String(c.id) === classIdStr);
+        return foundClass?.name;
+      })
+      .filter(Boolean) as string[];
   };
 
   if (quizzes.length === 0) {
@@ -138,9 +149,24 @@ export function QuizList({ onEditQuiz }: QuizListProps) {
               </CardHeader>
               <CardContent>
                 <div className="flex flex-wrap gap-2 mb-4">
-                  <Badge variant="secondary" className="text-xs">
-                    {getClassName(quiz.classId)}
-                  </Badge>
+                  {(() => {
+                    const classIds = quiz.classIds || (quiz.classId ? [quiz.classId] : []);
+                    const classNames = getClassNames(classIds);
+                    
+                    if (classNames.length > 0) {
+                      return classNames.map((className, idx) => (
+                        <Badge key={idx} variant="secondary" className="text-xs">
+                          {className}
+                        </Badge>
+                      ));
+                    } else {
+                      return (
+                        <Badge variant="secondary" className="text-xs text-muted-foreground">
+                          Aucune classe assignée
+                        </Badge>
+                      );
+                    }
+                  })()}
                 </div>
 
                 <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">

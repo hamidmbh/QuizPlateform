@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
 import { 
   PlusCircle, 
   Trash2,
@@ -48,7 +49,14 @@ export function EditQuizForm({ quiz, onSaved, onCancel }: EditQuizFormProps) {
   const [title, setTitle] = useState(quiz.title || '');
   const [description, setDescription] = useState(quiz.description || '');
   const [durationMinutes, setDurationMinutes] = useState(quiz.durationMinutes || quiz.timeLimit || 15);
-  const [selectedClassId, setSelectedClassId] = useState(quiz.classId || '');
+  const [selectedClassIds, setSelectedClassIds] = useState<string[]>(() => {
+    if (quiz.classIds && quiz.classIds.length > 0) {
+      return quiz.classIds;
+    } else if (quiz.classId) {
+      return [quiz.classId];
+    }
+    return [];
+  });
   const [openAt, setOpenAt] = useState(
     quiz.openAt ? new Date(quiz.openAt).toISOString().slice(0, 16) : ''
   );
@@ -142,8 +150,8 @@ export function EditQuizForm({ quiz, onSaved, onCancel }: EditQuizFormProps) {
     if (!title.trim()) {
       newErrors.push('Le titre est requis');
     }
-    if (!selectedClassId) {
-      newErrors.push('Sélectionnez une classe');
+    if (selectedClassIds.length === 0) {
+      newErrors.push('Sélectionnez au moins une classe');
     }
     if (durationMinutes < 1 || durationMinutes > 180) {
       newErrors.push('Le temps limite doit être entre 1 et 180 minutes');
@@ -176,34 +184,49 @@ export function EditQuizForm({ quiz, onSaved, onCancel }: EditQuizFormProps) {
     return newErrors.length === 0;
   };
 
-  // Note: Backend doesn't have an update quiz endpoint yet
-  // For now, we'll just show a message
+  const updateQuizMutation = useMutation({
+    mutationFn: async (quizData: any) => {
+      return await teacherApi.updateQuiz(quiz.id, quizData);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quizzes'] });
+      onSaved?.();
+    },
+    onError: (error: any) => {
+      setErrors([error.message || 'Erreur lors de la mise à jour du quiz']);
+      setIsSubmitting(false);
+    },
+  });
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validateForm()) return;
 
     setIsSubmitting(true);
-    setErrors(['La modification des quiz n\'est pas encore implémentée côté backend. Veuillez supprimer et recréer le quiz.']);
-    setIsSubmitting(false);
-    
-    // TODO: Implement when backend supports quiz updates
-    // const quizData = {
-    //   title: title.trim(),
-    //   description: description.trim(),
-    //   durationMinutes,
-    //   openAt: new Date(openAt).toISOString(),
-    //   closeAt: new Date(closeAt).toISOString(),
-    //   questions: questions.map(q => ({
-    //     text: q.text.trim(),
-    //     options: q.options
-    //       .filter(o => o.text.trim())
-    //       .map(opt => ({
-    //         text: opt.text.trim(),
-    //         isCorrect: opt.isCorrect,
-    //       })),
-    //   })),
-    // };
+    setErrors([]);
+
+    const quizData = {
+      title: title.trim(),
+      description: description.trim(),
+      durationMinutes,
+      classIds: selectedClassIds,
+      openAt: new Date(openAt).toISOString(),
+      closeAt: new Date(closeAt).toISOString(),
+      questions: questions.map(q => ({
+        id: q.id,
+        text: q.text.trim(),
+        options: q.options
+          .filter(o => o.text.trim())
+          .map(opt => ({
+            id: opt.id,
+            text: opt.text.trim(),
+            isCorrect: opt.isCorrect,
+          })),
+      })),
+    };
+
+    updateQuizMutation.mutate(quizData);
   };
 
   return (
@@ -261,26 +284,42 @@ export function EditQuizForm({ quiz, onSaved, onCancel }: EditQuizFormProps) {
               rows={2}
             />
           </div>
-          <div className="grid sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-classId">Classe assignée *</Label>
-              <Select value={selectedClassId} onValueChange={setSelectedClassId}>
-                <SelectTrigger id="edit-classId">
-                  <SelectValue placeholder="Sélectionner une classe" />
-                </SelectTrigger>
-                <SelectContent>
-                  {isLoadingClasses ? (
-                    <SelectItem value="loading" disabled>Chargement...</SelectItem>
-                  ) : classes.length === 0 ? (
-                    <SelectItem value="none" disabled>Aucune classe disponible</SelectItem>
-                  ) : (
-                    classes.map(c => (
-                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
+          <div className="space-y-2">
+            <Label>Classes assignées *</Label>
+            <div className="border rounded-lg p-4 space-y-2 max-h-48 overflow-y-auto">
+              {isLoadingClasses ? (
+                <p className="text-sm text-muted-foreground">Chargement...</p>
+              ) : classes.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Aucune classe disponible</p>
+              ) : (
+                classes.map(c => (
+                  <div key={c.id} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`edit-class-${c.id}`}
+                      checked={selectedClassIds.includes(c.id)}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          setSelectedClassIds([...selectedClassIds, c.id]);
+                        } else {
+                          setSelectedClassIds(selectedClassIds.filter(id => id !== c.id));
+                        }
+                      }}
+                    />
+                    <Label
+                      htmlFor={`edit-class-${c.id}`}
+                      className="text-sm font-normal cursor-pointer flex-1"
+                    >
+                      {c.name}
+                    </Label>
+                  </div>
+                ))
+              )}
             </div>
+            {selectedClassIds.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {selectedClassIds.length} classe(s) sélectionnée(s)
+              </p>
+            )}
           </div>
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="space-y-2">

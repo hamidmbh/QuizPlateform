@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Quiz extends Model
@@ -14,7 +15,6 @@ class Quiz extends Model
     protected $fillable = [
         'title',
         'description',
-        'class_id',
         'created_by',
         'duration_minutes',
         'open_at',
@@ -27,11 +27,12 @@ class Quiz extends Model
     ];
 
     /**
-     * Get the class that owns the quiz.
+     * Get the classes that this quiz is assigned to.
      */
-    public function class(): BelongsTo
+    public function classes(): BelongsToMany
     {
-        return $this->belongsTo(ClassModel::class, 'class_id');
+        return $this->belongsToMany(ClassModel::class, 'quiz_class', 'quiz_id', 'class_id')
+            ->withTimestamps();
     }
 
     /**

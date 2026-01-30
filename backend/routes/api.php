@@ -32,10 +32,11 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/', [TeacherController::class, 'createClass']);
             Route::delete('/{id}', [TeacherController::class, 'deleteClass']);
             Route::get('/{id}/students', [TeacherController::class, 'getClassStudents']);
-            Route::post('/{id}/quizzes', [TeacherController::class, 'createQuiz']);
         });
 
         Route::get('/quizzes', [TeacherController::class, 'getQuizzes']);
+        Route::post('/quizzes', [TeacherController::class, 'createQuiz']);
+        Route::put('/quizzes/{id}', [TeacherController::class, 'updateQuiz']);
         Route::delete('/quizzes/{id}', [TeacherController::class, 'deleteQuiz']);
         Route::get('/quizzes/{id}/submissions', [TeacherController::class, 'getQuizSubmissions']);
         Route::get('/submissions/{id}', [TeacherController::class, 'getSubmission']);
