@@ -418,9 +418,11 @@ export function StudentList() {
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <Badge variant="secondary">
-                          {studentClass?.name || 'Non assigné'}
-                        </Badge>
+                        {studentClass?.name && (
+                          <Badge variant="secondary">
+                            {studentClass.name}
+                          </Badge>
+                        )}
                         <Button 
                           variant="ghost" 
                           size="icon"

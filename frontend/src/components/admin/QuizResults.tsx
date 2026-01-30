@@ -42,6 +42,15 @@ import {
 } from '@/components/ui/alert-dialog';
 import { exportResultsToPDF, exportDetailedResultsToPDF } from '@/utils/pdfExport';
 
+// Normalize submission keys (backend may return snake_case)
+function normSub(sub: any) {
+  const quizId = sub.quiz_id ?? sub.quizId;
+  const studentId = sub.student_id ?? sub.studentId;
+  const submittedAt = sub.submitted_at ?? sub.submittedAt;
+  const startedAt = sub.started_at ?? sub.startedAt;
+  return { ...sub, quizId, studentId, submittedAt, startedAt };
+}
+
 export function QuizResults() {
   const { quizzes, students, classes, resetQuizForStudent } = useQuiz();
   const [selectedQuiz, setSelectedQuiz] = useState<string>('all');
@@ -53,37 +62,43 @@ export function QuizResults() {
     queryKey: ['submissions', selectedQuiz],
     queryFn: async () => {
       if (selectedQuiz === 'all') {
-        // Fetch submissions for all quizzes
         const allSubmissions: any[] = [];
         for (const quiz of quizzes) {
           try {
             const quizSubmissions = await teacherApi.getQuizSubmissions(quiz.id);
-            allSubmissions.push(...quizSubmissions);
+            allSubmissions.push(...quizSubmissions.map(normSub));
           } catch (error) {
             console.error(`Failed to fetch submissions for quiz ${quiz.id}:`, error);
           }
         }
         return allSubmissions;
       } else {
-        // Fetch submissions for selected quiz
-        return await teacherApi.getQuizSubmissions(selectedQuiz);
+        const list = await teacherApi.getQuizSubmissions(selectedQuiz);
+        return list.map(normSub);
       }
     },
     enabled: quizzes.length > 0,
-    refetchOnWindowFocus: true, // Auto-refresh when window regains focus
+    refetchOnWindowFocus: true,
   });
 
   const handleExportPDF = () => {
-    // Convert submissions to attempts format for PDF export
-    const attempts = submissionsData.map((sub: any) => ({
-      id: sub.id,
-      quizId: sub.quizId,
-      studentId: sub.studentId,
-      answers: sub.answers || [],
-      completedAt: sub.submittedAt || sub.startedAt,
-      score: sub.score,
-    }));
-    
+    const attempts = submissionsData.map((sub: any) => {
+      const s = normSub(sub);
+      const quiz = quizzes.find(q => q.id === s.quizId);
+      const total = quiz?.questions?.length ?? 0;
+      const scoreNum = Number(s.score);
+      const pct = total > 0 ? Math.round((100 * scoreNum) / total) : 0;
+      return {
+        id: s.id,
+        quizId: s.quizId,
+        studentId: s.studentId,
+        answers: s.answers || [],
+        completedAt: s.submittedAt || s.startedAt,
+        score: pct,
+        scorePoints: scoreNum,
+        totalQuestions: total,
+      };
+    });
     exportResultsToPDF({
       quizzes,
       attempts,
@@ -97,16 +112,23 @@ export function QuizResults() {
   const handleExportQuizPDF = (quizId: string) => {
     const quiz = quizzes.find(q => q.id === quizId);
     if (quiz) {
-      const quizSubmissions = submissionsData.filter((sub: any) => sub.quizId === quizId);
-      const attempts = quizSubmissions.map((sub: any) => ({
-        id: sub.id,
-        quizId: sub.quizId,
-        studentId: sub.studentId,
-        answers: sub.answers || [],
-        completedAt: sub.submittedAt || sub.startedAt,
-        score: sub.score,
-      }));
-      
+      const total = quiz.questions?.length ?? 0;
+      const quizSubmissions = submissionsData.filter((sub: any) => (sub.quiz_id ?? sub.quizId) === quizId);
+      const attempts = quizSubmissions.map((sub: any) => {
+        const s = normSub(sub);
+        const scoreNum = Number(s.score);
+        const pct = total > 0 ? Math.round((100 * scoreNum) / total) : 0;
+        return {
+          id: s.id,
+          quizId: s.quizId,
+          studentId: s.studentId,
+          answers: s.answers || [],
+          completedAt: s.submittedAt || s.startedAt,
+          score: pct,
+          scorePoints: scoreNum,
+          totalQuestions: total,
+        };
+      });
       exportDetailedResultsToPDF({
         quiz,
         attempts,
@@ -116,30 +138,42 @@ export function QuizResults() {
     }
   };
 
-  // Filter students based on selected class
-  const filteredStudents = students.filter(s => 
+  const filteredStudents = students.filter(s =>
     selectedClass === 'all' || s.classId === selectedClass
   );
 
-  // Get submissions for a student (convert backend submissions to attempt format)
   const getStudentAttempts = (studentId: string) => {
     return submissionsData
       .filter((sub: any) => {
-        const matchesStudent = sub.studentId === studentId;
-        const matchesQuiz = selectedQuiz === 'all' || sub.quizId === selectedQuiz;
+        const s = normSub(sub);
+        const matchesStudent = String(s.studentId) === String(studentId);
+        const matchesQuiz = selectedQuiz === 'all' || String(s.quizId) === selectedQuiz;
         return matchesStudent && matchesQuiz;
       })
-      .map((sub: any) => ({
-        id: sub.id,
-        quizId: sub.quizId,
-        studentId: sub.studentId,
-        answers: sub.answers || [], // Backend format: [{ questionId, optionId }]
-        completedAt: sub.submittedAt || sub.startedAt,
-        score: sub.score,
-      }));
+      .map((sub: any) => {
+        const s = normSub(sub);
+        const quizFromList = quizzes.find(q => String(q.id) === String(s.quizId));
+        const quizFromSub = sub.quiz ? { id: sub.quiz.id ?? s.quizId, title: sub.quiz.title, questions: sub.quiz.questions ?? [] } : null;
+        const quiz = quizFromList ?? quizFromSub;
+        const total = Array.isArray(quiz?.questions) ? quiz.questions.length : 0;
+        const scoreNum = Number(s.score);
+        const pct = total > 0 ? Math.round((100 * scoreNum) / total) : 0;
+        return {
+          id: s.id,
+          quizId: s.quizId,
+          studentId: s.studentId,
+          answers: s.answers || [],
+          completedAt: s.submittedAt || s.startedAt,
+          score: scoreNum,
+          scorePct: pct,
+          totalQuestions: total,
+          quiz,
+        };
+      })
+      .filter((a: any) => a.completedAt != null);
   };
 
-  const getQuizById = (quizId: string) => quizzes.find(q => q.id === quizId);
+  const getQuizById = (quizId: string | number) => quizzes.find(q => String(q.id) === String(quizId));
 
   return (
     <div className="space-y-6">
@@ -230,12 +264,14 @@ export function QuizResults() {
                             </div>
                             <div>
                               <CardTitle className="text-base">{student.name}</CardTitle>
-                              <CardDescription>{studentClass?.name}</CardDescription>
+                              {studentClass?.name && (
+                                <CardDescription>{studentClass.name}</CardDescription>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-3">
                             <Badge variant="secondary">
-                              {studentAttempts.filter((a: any) => a.score !== null && a.score !== undefined).length} quiz complété(s)
+                              {studentAttempts.filter((a: any) => a.completedAt != null).length} quiz complété(s)
                             </Badge>
                             {studentAttempts.length > 0 && (
                               <Badge variant="outline">
@@ -261,8 +297,8 @@ export function QuizResults() {
                         ) : (
                           <div className="space-y-4">
                             {studentAttempts.map(attempt => {
-                              const quiz = getQuizById(attempt.quizId);
-                              if (!quiz) return null;
+                              const quiz = attempt.quiz ?? getQuizById(attempt.quizId);
+                              if (!quiz || !Array.isArray(quiz.questions)) return null;
 
                               return (
                                 <div 
@@ -279,12 +315,14 @@ export function QuizResults() {
                                     <div className="flex items-center gap-2">
                                       <Badge 
                                         className={
-                                          (attempt.score || 0) >= 50 
+                                          (attempt.scorePct ?? (attempt.totalQuestions ? Math.round((100 * (attempt.score ?? 0)) / attempt.totalQuestions) : 0)) >= 50 
                                             ? 'bg-success/20 text-success hover:bg-success/30 border-0' 
                                             : 'bg-destructive/20 text-destructive hover:bg-destructive/30 border-0'
                                         }
                                       >
-                                        {attempt.score}%
+                                        {attempt.totalQuestions
+                                          ? `${attempt.score ?? 0} / ${attempt.totalQuestions} (${attempt.scorePct ?? Math.round((100 * (attempt.score ?? 0)) / attempt.totalQuestions)}%)`
+                                          : `${attempt.score ?? 0}`}
                                       </Badge>
                                       <Button 
                                         variant="ghost" 
@@ -324,31 +362,26 @@ export function QuizResults() {
                                   {/* Questions & Answers */}
                                   <div className="space-y-3">
                                     {quiz.questions.map((question, qIndex) => {
-                                      // Find the answer for this question
-                                      const answer = Array.isArray(attempt.answers) 
-                                        ? attempt.answers.find((a: any) => 
-                                            a.questionId === question.id || 
-                                            (typeof a === 'object' && a.questionId === question.id)
+                                      const qId = String(question.id);
+                                      const answer = Array.isArray(attempt.answers)
+                                        ? attempt.answers.find((a: any) =>
+                                            (a.questionId ?? a.question_id) == null ? false : String(a.questionId ?? a.question_id) === qId
                                           )
                                         : null;
-                                      
-                                      // Handle both formats: { questionId, optionId } or index
+
                                       let selectedOptionId: string | null = null;
                                       let selectedOptionIndex: number = -1;
-                                      
-                                      if (answer) {
-                                        if (typeof answer === 'object' && answer.optionId) {
-                                          selectedOptionId = answer.optionId;
-                                          selectedOptionIndex = question.options.findIndex(opt => opt.id === answer.optionId);
-                                        } else if (typeof answer === 'number') {
-                                          selectedOptionIndex = answer;
-                                          selectedOptionId = question.options[answer]?.id || null;
-                                        }
+                                      const optId = answer && typeof answer === 'object' ? (answer.optionId ?? answer.option_id) : null;
+                                      if (optId != null) {
+                                        selectedOptionId = String(optId);
+                                        selectedOptionIndex = question.options.findIndex((opt: any) => String(opt.id) === selectedOptionId);
+                                      } else if (answer && typeof answer === 'number') {
+                                        selectedOptionIndex = answer;
+                                        selectedOptionId = question.options[answer]?.id ?? null;
                                       }
-                                      
-                                      // Check if correct (find correct option)
-                                      const correctOption = question.options.find(opt => opt.isCorrect);
-                                      const isCorrect = selectedOptionId === correctOption?.id;
+
+                                      const correctOption = question.options.find((opt: any) => opt.isCorrect ?? opt.is_correct);
+                                      const isCorrect = correctOption != null && selectedOptionId != null && String(correctOption.id) === String(selectedOptionId);
 
                                       return (
                                         <div 

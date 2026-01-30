@@ -65,12 +65,11 @@ class StudentController extends Controller
             $quiz->setAttribute('submissionStatus', $quiz->submissionStatus);
         });
 
-        // Convert to array to ensure dynamic properties are included
+        // Convert to array; do not expose class/classIds to students
         $quizzesArray = $quizzes->map(function ($quiz) {
             $quizArray = $quiz->toArray();
             $quizArray['submissionStatus'] = $quiz->submissionStatus;
-            // Add classIds array for easier frontend consumption
-            $quizArray['classIds'] = $quiz->classes->pluck('id')->map(fn($id) => (string)$id)->toArray();
+            unset($quizArray['classes']);
             return $quizArray;
         });
 
@@ -155,6 +154,11 @@ class StudentController extends Controller
     /**
      * Submit quiz answers
      * POST /api/quizzes/{id}/submit
+     *
+     * - answers is optional/nullable; empty or missing is valid.
+     * - Score = sum of points per question (1 per correct, 0 otherwise).
+     * - Submission is marked completed with timestamp.
+     * - Always returns JSON; 422 only for malformed data.
      */
     public function submitQuiz(Request $request, string $id): JsonResponse
     {
@@ -168,6 +172,7 @@ class StudentController extends Controller
             ->whereHas('classes', function ($query) use ($user) {
                 $query->where('classes.id', $user->class_id);
             })
+            ->with('questions.options')
             ->firstOrFail();
 
         $submission = Submission::where('quiz_id', $quiz->id)
@@ -178,73 +183,56 @@ class StudentController extends Controller
             return response()->json(['message' => 'Quiz already submitted'], 400);
         }
 
-        // Allow submission even if expired (for auto-submit scenarios)
-        // The frontend will auto-submit when time expires, so we should accept it
-        // if ($submission->isExpired()) {
-        //     return response()->json(['message' => 'Quiz time has expired'], 400);
-        // }
-
+        // Validation: answers optional/nullable; when present, each item must have questionId and optionId (422 for malformed only)
         $validated = $request->validate([
-            'answers' => 'required|array',
+            'answers' => 'nullable|array',
             'answers.*.questionId' => 'required|exists:questions,id',
             'answers.*.optionId' => 'required|exists:options,id',
         ]);
 
+        $answersList = $validated['answers'] ?? [];
+        // Map submitted answers by question ID (last answer wins if duplicate questionId)
+        $answersByQuestionId = collect($answersList)->keyBy('questionId');
+
         DB::beginTransaction();
         try {
-            // Delete existing answers
             Answer::where('submission_id', $submission->id)->delete();
 
-            // Create new answers
-            foreach ($validated['answers'] as $answerData) {
+            $questionIds = $quiz->questions->pluck('id')->flip();
+
+            foreach ($answersList as $answerData) {
+                $questionId = $answerData['questionId'];
+                $optionId = $answerData['optionId'];
+                if (!$questionIds->has($questionId)) {
+                    continue;
+                }
+                $question = $quiz->questions->firstWhere('id', $questionId);
+                if (!$question || !$question->options->contains('id', $optionId)) {
+                    continue;
+                }
                 Answer::create([
                     'submission_id' => $submission->id,
-                    'question_id' => $answerData['questionId'],
-                    'option_id' => $answerData['optionId'],
+                    'question_id' => $questionId,
+                    'option_id' => $optionId,
                 ]);
             }
 
-            // Calculate score - support multiple correct answers
-            $totalQuestions = $quiz->questions()->count();
-            $correctAnswers = 0;
-
-            foreach ($quiz->questions as $question) {
-                // Get all correct options for this question
-                $correctOptions = $question->options()->where('is_correct', true)->pluck('id')->toArray();
-                
-                // Get student's answer(s) for this question
-                $studentAnswers = Answer::where('submission_id', $submission->id)
-                    ->where('question_id', $question->id)
-                    ->pluck('option_id')
-                    ->toArray();
-
-                // Check if student selected all correct options and no incorrect ones
-                if (!empty($correctOptions) && !empty($studentAnswers)) {
-                    // For multiple correct answers: student must select all correct options
-                    $selectedCorrect = array_intersect($studentAnswers, $correctOptions);
-                    $selectedIncorrect = array_diff($studentAnswers, $correctOptions);
-                    
-                    // Question is correct if:
-                    // - All correct options are selected
-                    // - No incorrect options are selected
-                    // - Number of selected answers matches number of correct answers
-                    if (count($selectedCorrect) === count($correctOptions) && 
-                        count($selectedIncorrect) === 0 &&
-                        count($studentAnswers) === count($correctOptions)) {
-                        $correctAnswers++;
-                    }
-                } elseif (!empty($correctOptions) && empty($studentAnswers)) {
-                    // No answer provided - incorrect
-                } elseif (empty($correctOptions)) {
-                    // Question has no correct options defined - skip
+            // Scoring: iterate all questions; no answer or wrong option = 0, correct option = 1 (or question points if available)
+            $score = $quiz->questions->sum(function (Question $question) use ($answersByQuestionId) {
+                $submitted = $answersByQuestionId->get($question->id);
+                if ($submitted === null) {
+                    return 0;
                 }
-            }
+                $option = $question->options->firstWhere('id', $submitted['optionId']);
+                if ($option === null || !$option->is_correct) {
+                    return 0;
+                }
+                return 1;
+            });
 
-            $score = $totalQuestions > 0 ? round(($correctAnswers / $totalQuestions) * 100, 2) : 0;
-
-            // Update submission
+            $completedAt = Carbon::now();
             $submission->update([
-                'submitted_at' => Carbon::now(),
+                'submitted_at' => $completedAt,
                 'score' => $score,
             ]);
 
@@ -253,8 +241,16 @@ class StudentController extends Controller
             $submission->load(['answers.option', 'answers.question']);
 
             return response()->json([
-                'submission' => $submission,
-                'score' => $score,
+                'submission' => [
+                    'id' => $submission->id,
+                    'quizId' => $submission->quiz_id,
+                    'studentId' => $submission->student_id,
+                    'startedAt' => $submission->started_at->toIso8601String(),
+                    'expiresAt' => $submission->expires_at->toIso8601String(),
+                    'submittedAt' => $submission->submitted_at->toIso8601String(),
+                    'score' => (float) $submission->score,
+                ],
+                'score' => (float) $score,
             ]);
         } catch (\Exception $e) {
             DB::rollBack();

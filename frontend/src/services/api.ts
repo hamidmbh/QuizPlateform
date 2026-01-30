@@ -30,6 +30,7 @@ const apiRequest = async <T>(
 
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
+    'Accept': 'application/json',
     ...options.headers,
   };
 
@@ -48,6 +49,7 @@ const apiRequest = async <T>(
   const response = await fetch(url, {
     ...options,
     headers,
+    credentials: "include",
   });
 
   // Handle 401 Unauthorized - token expired or invalid

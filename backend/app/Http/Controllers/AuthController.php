@@ -33,15 +33,18 @@ class AuthController extends Controller
         // Create a simple token (in production, use Sanctum or JWT)
         $token = $user->createToken('auth-token')->plainTextToken;
 
+        $userPayload = [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => $user->role,
+        ];
+        if ($user->role === 'TEACHER') {
+            $userPayload['classId'] = $user->class_id;
+        }
         return response()->json([
             'token' => $token,
-            'user' => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-                'role' => $user->role,
-                'classId' => $user->class_id,
-            ],
+            'user' => $userPayload,
         ]);
     }
 
@@ -53,13 +56,16 @@ class AuthController extends Controller
     {
         $user = $request->user();
 
-        return response()->json([
+        $payload = [
             'id' => $user->id,
             'name' => $user->name,
             'email' => $user->email,
             'role' => $user->role,
-            'classId' => $user->class_id,
-        ]);
+        ];
+        if ($user->role === 'TEACHER') {
+            $payload['classId'] = $user->class_id;
+        }
+        return response()->json($payload);
     }
 
     /**

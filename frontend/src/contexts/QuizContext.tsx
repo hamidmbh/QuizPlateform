@@ -109,12 +109,13 @@ const mapClassFromBackend = (backendClass: any): Class => {
 
 // Helper to map backend user to frontend format
 const mapUserFromBackend = (backendUser: any): User => {
+  const classId = backendUser.classId ?? backendUser.class_id;
   return {
-    id: backendUser.id,
+    id: String(backendUser.id),
     name: backendUser.name,
     email: backendUser.email,
     role: backendUser.role,
-    classId: backendUser.classId || backendUser.class_id,
+    classId: classId != null ? String(classId) : undefined,
   };
 };
 

@@ -298,9 +298,10 @@ class TeacherController extends Controller
             ->firstOrFail();
 
         $submissions = Submission::where('quiz_id', $quiz->id)
-            ->with(['student', 'answers.option', 'answers.question'])
+            ->with(['student', 'quiz.questions.options', 'answers.option', 'answers.question'])
             ->get();
 
+        // Return submissions with quiz and student so professor sees completed quizzes per student and score per quiz
         return response()->json($submissions);
     }
 
