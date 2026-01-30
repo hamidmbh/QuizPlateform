@@ -1,26 +1,106 @@
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useQuiz } from '@/contexts/QuizContext';
+import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { GraduationCap, Clock, BookOpen, CheckCircle, XCircle, LogOut } from 'lucide-react';
+import { GraduationCap, Clock, BookOpen, CheckCircle, XCircle, LogOut, AlertCircle } from 'lucide-react';
+import { studentApi } from '@/services/api';
+import { Quiz } from '@/types/quiz';
+
+// Helper to convert backend quiz format to frontend format
+const mapQuizFromBackend = (backendQuiz: any): Quiz & { submissionStatus?: string } => {
+  return {
+    id: backendQuiz.id,
+    title: backendQuiz.title,
+    description: backendQuiz.description || '',
+    questions: backendQuiz.questions || [],
+    durationMinutes: backendQuiz.durationMinutes || backendQuiz.duration_minutes,
+    classId: backendQuiz.classId || backendQuiz.class_id,
+    openAt: backendQuiz.openAt || backendQuiz.open_at,
+    closeAt: backendQuiz.closeAt || backendQuiz.close_at,
+    createdBy: backendQuiz.createdBy || backendQuiz.created_by,
+    createdAt: backendQuiz.createdAt || backendQuiz.created_at,
+    submissionStatus: backendQuiz.submissionStatus || backendQuiz.submission_status, // Preserve submission status
+  };
+};
 
 export function StudentDashboard() {
   const { user, logout } = useAuth();
-  const { quizzes, getAttemptsByStudent, classes } = useQuiz();
   const navigate = useNavigate();
 
-  if (!user || user.role !== 'student') {
+  // Fetch quizzes from API
+  const { data: quizzesData, isLoading, error, refetch } = useQuery({
+    queryKey: ['studentQuizzes'],
+    queryFn: async () => {
+      const quizzes = await studentApi.getQuizzes();
+      return quizzes.map(mapQuizFromBackend);
+    },
+    enabled: !!user && user.role === 'STUDENT',
+    refetchOnWindowFocus: true, // Refetch when window regains focus
+    refetchOnMount: true, // Refetch when component mounts
+  });
+
+  // Refetch quizzes when component becomes visible (user returns from quiz)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refetch();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [refetch]);
+
+  const studentQuizzes = quizzesData || [];
+  
+  // Extract quiz statuses from submissions
+  const quizStatuses: Record<string, 'completed' | 'late' | 'pending' | 'in_progress'> = {};
+  if (quizzesData) {
+    const now = new Date();
+    quizzesData.forEach((quiz: any) => {
+      const closeDate = new Date(quiz.closeAt || quiz.close_at);
+      const isLate = now > closeDate;
+      
+      if (quiz.submissionStatus === 'completed') {
+        quizStatuses[String(quiz.id)] = 'completed';
+      } else if (quiz.submissionStatus === 'in_progress') {
+        quizStatuses[String(quiz.id)] = 'in_progress';
+      } else if (isLate) {
+        quizStatuses[String(quiz.id)] = 'late';
+      } else {
+        quizStatuses[String(quiz.id)] = 'pending';
+      }
+    });
+  }
+  
+  const completedQuizIds = Object.keys(quizStatuses).filter(id => quizStatuses[id] === 'completed');
+
+  if (!user || user.role !== 'STUDENT') {
     return null;
   }
 
-  const studentClass = classes.find(c => c.id === user.classId);
-  const studentQuizzes = quizzes.filter(q => q.classIds.includes(user.classId || ''));
-  const studentAttempts = getAttemptsByStudent(user.id);
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
-  const completedQuizIds = studentAttempts.map(a => a.quizId);
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-destructive">Erreur lors du chargement des quiz</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   const handleLogout = () => {
     logout();
@@ -58,7 +138,7 @@ export function StudentDashboard() {
           <div className="mb-8">
             <h1 className="font-display text-3xl font-bold mb-2">Tableau de bord</h1>
             <p className="text-muted-foreground">
-              Classe : <span className="text-foreground font-medium">{studentClass?.name || 'Non assigné'}</span>
+              Bienvenue, <span className="text-foreground font-medium">{user.name}</span>
             </p>
           </div>
 
@@ -118,7 +198,10 @@ export function StudentDashboard() {
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {studentQuizzes.map((quiz, index) => {
-                const isCompleted = completedQuizIds.includes(quiz.id);
+                const status = quizStatuses[quiz.id] || 'pending';
+                const isCompleted = status === 'completed';
+                const isLate = status === 'late';
+                const isInProgress = status === 'in_progress';
                 
                 return (
                   <motion.div
@@ -137,7 +220,17 @@ export function StudentDashboard() {
                           {isCompleted ? (
                             <Badge className="bg-success/20 text-success hover:bg-success/30 border-0">
                               <CheckCircle className="w-3 h-3 mr-1" />
-                              Fait
+                              Completed
+                            </Badge>
+                          ) : isLate ? (
+                            <Badge className="bg-destructive/20 text-destructive hover:bg-destructive/30 border-0">
+                              <AlertCircle className="w-3 h-3 mr-1" />
+                              Late
+                            </Badge>
+                          ) : isInProgress ? (
+                            <Badge variant="secondary">
+                              <Clock className="w-3 h-3 mr-1" />
+                              In Progress
                             </Badge>
                           ) : (
                             <Badge variant="secondary">
@@ -155,7 +248,7 @@ export function StudentDashboard() {
                           </div>
                           <div className="flex items-center gap-1">
                             <Clock className="w-4 h-4" />
-                            {quiz.timeLimit} min
+                            {quiz.durationMinutes} min
                           </div>
                         </div>
                         
@@ -163,10 +256,14 @@ export function StudentDashboard() {
                           <Button variant="outline" className="w-full" disabled>
                             Quiz terminé
                           </Button>
+                        ) : isLate ? (
+                          <Button variant="outline" className="w-full" disabled>
+                            Quiz fermé
+                          </Button>
                         ) : (
                           <Link to={`/quiz/${quiz.id}`}>
                             <Button className="w-full gradient-primary text-primary-foreground">
-                              Commencer le quiz
+                              {isInProgress ? 'Continuer le quiz' : 'Commencer le quiz'}
                             </Button>
                           </Link>
                         )}

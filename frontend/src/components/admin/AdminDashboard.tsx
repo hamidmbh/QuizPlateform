@@ -12,12 +12,14 @@ import {
   BookOpen, 
   Users, 
   PlusCircle,
-  BarChart3 
+  BarChart3,
+  School
 } from 'lucide-react';
 import { QuizList } from './QuizList';
 import { StudentList } from './StudentList';
 import { CreateQuizForm } from './CreateQuizForm';
 import { QuizResults } from './QuizResults';
+import { ClassManagement } from './ClassManagement';
 
 export function AdminDashboard() {
   const { user, logout } = useAuth();
@@ -25,7 +27,7 @@ export function AdminDashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('quizzes');
 
-  if (!user || user.role !== 'admin') {
+  if (!user || user.role !== 'TEACHER') {
     return null;
   }
 
@@ -126,7 +128,11 @@ export function AdminDashboard() {
 
           {/* Main Content Tabs */}
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid w-full grid-cols-4 mb-6">
+            <TabsList className="grid w-full grid-cols-5 mb-6">
+              <TabsTrigger value="classes" className="flex items-center gap-2">
+                <School className="w-4 h-4" />
+                <span className="hidden sm:inline">Classes</span>
+              </TabsTrigger>
               <TabsTrigger value="quizzes" className="flex items-center gap-2">
                 <BookOpen className="w-4 h-4" />
                 <span className="hidden sm:inline">Quiz</span>
@@ -144,6 +150,10 @@ export function AdminDashboard() {
                 <span className="hidden sm:inline">Résultats</span>
               </TabsTrigger>
             </TabsList>
+
+            <TabsContent value="classes">
+              <ClassManagement />
+            </TabsContent>
 
             <TabsContent value="quizzes">
               <QuizList />

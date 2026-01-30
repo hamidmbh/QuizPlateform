@@ -50,10 +50,8 @@ export function QuizList({ onEditQuiz }: QuizListProps) {
     );
   }
 
-  const getClassNames = (classIds: string[]) => {
-    return classIds
-      .map(id => classes.find(c => c.id === id)?.name || 'Classe inconnue')
-      .join(', ');
+  const getClassName = (classId: string) => {
+    return classes.find(c => c.id === classId)?.name || 'Classe inconnue';
   };
 
   if (quizzes.length === 0) {
@@ -120,7 +118,13 @@ export function QuizList({ onEditQuiz }: QuizListProps) {
                           <AlertDialogFooter>
                             <AlertDialogCancel>Annuler</AlertDialogCancel>
                             <AlertDialogAction 
-                              onClick={() => deleteQuiz(quiz.id)}
+                              onClick={async () => {
+                                try {
+                                  await deleteQuiz(quiz.id);
+                                } catch (error) {
+                                  alert('Erreur lors de la suppression du quiz: ' + (error instanceof Error ? error.message : 'Erreur inconnue'));
+                                }
+                              }}
                               className="bg-destructive text-destructive-foreground"
                             >
                               Supprimer
@@ -134,11 +138,9 @@ export function QuizList({ onEditQuiz }: QuizListProps) {
               </CardHeader>
               <CardContent>
                 <div className="flex flex-wrap gap-2 mb-4">
-                  {quiz.classIds.map(classId => (
-                    <Badge key={classId} variant="secondary" className="text-xs">
-                      {classes.find(c => c.id === classId)?.name}
-                    </Badge>
-                  ))}
+                  <Badge variant="secondary" className="text-xs">
+                    {getClassName(quiz.classId)}
+                  </Badge>
                 </div>
 
                 <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
@@ -148,7 +150,7 @@ export function QuizList({ onEditQuiz }: QuizListProps) {
                   </div>
                   <div className="flex items-center gap-1">
                     <Clock className="w-4 h-4" />
-                    {quiz.timeLimit} min
+                    {quiz.durationMinutes || quiz.timeLimit || 0} min
                   </div>
                 </div>
 

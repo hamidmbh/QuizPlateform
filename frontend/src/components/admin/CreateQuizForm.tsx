@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useQuiz } from '@/contexts/QuizContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { teacherApi } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,34 +14,84 @@ import {
   Trash2,
   Clock,
   BookOpen,
-  CheckCircle
+  CheckCircle,
+  Loader2,
+  Calendar
 } from 'lucide-react';
-import { Quiz, Question } from '@/types/quiz';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface CreateQuizFormProps {
   onCreated?: () => void;
 }
 
+interface QuestionForm {
+  text: string;
+  options: Array<{ text: string; isCorrect: boolean }>;
+}
+
 export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
-  const { addQuiz, classes } = useQuiz();
+  const { classes, isLoadingClasses } = useQuiz();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [timeLimit, setTimeLimit] = useState(15);
-  const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
-  const [questions, setQuestions] = useState<Omit<Question, 'id'>[]>([
-    { text: '', options: ['', '', '', ''], correctAnswer: 0 }
+  const [durationMinutes, setDurationMinutes] = useState(15);
+  const [selectedClassId, setSelectedClassId] = useState<string>('');
+  const [openAt, setOpenAt] = useState('');
+  const [closeAt, setCloseAt] = useState('');
+  const [questions, setQuestions] = useState<QuestionForm[]>([
+    { 
+      text: '', 
+      options: [
+        { text: '', isCorrect: false },
+        { text: '', isCorrect: false },
+        { text: '', isCorrect: false },
+        { text: '', isCorrect: false }
+      ]
+    }
   ]);
   const [errors, setErrors] = useState<string[]>([]);
 
-  const handleClassToggle = (classId: string) => {
-    setSelectedClasses(prev => 
-      prev.includes(classId) 
-        ? prev.filter(id => id !== classId)
-        : [...prev, classId]
-    );
-  };
+  // Create quiz mutation
+  const createQuizMutation = useMutation({
+    mutationFn: async (quizData: any) => {
+      if (!selectedClassId) throw new Error('Classe requise');
+      return await teacherApi.createQuiz(selectedClassId, quizData);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quizzes'] });
+      // Reset form
+      setTitle('');
+      setDescription('');
+      setDurationMinutes(15);
+      setSelectedClassId('');
+      setOpenAt('');
+      setCloseAt('');
+      setQuestions([{ 
+        text: '', 
+        options: [
+          { text: '', isCorrect: false },
+          { text: '', isCorrect: false },
+          { text: '', isCorrect: false },
+          { text: '', isCorrect: false }
+        ]
+      }]);
+      setErrors([]);
+      onCreated?.();
+    },
+    onError: (error: any) => {
+      setErrors([error.message || 'Erreur lors de la création du quiz']);
+      setIsSubmitting(false);
+    },
+  });
 
   const handleQuestionChange = (index: number, text: string) => {
     const newQuestions = [...questions];
@@ -49,18 +101,27 @@ export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
 
   const handleOptionChange = (qIndex: number, oIndex: number, text: string) => {
     const newQuestions = [...questions];
-    newQuestions[qIndex].options[oIndex] = text;
+    newQuestions[qIndex].options[oIndex].text = text;
     setQuestions(newQuestions);
   };
 
   const handleCorrectAnswerChange = (qIndex: number, oIndex: number) => {
     const newQuestions = [...questions];
-    newQuestions[qIndex].correctAnswer = oIndex;
+    // Toggle correct status (support multiple correct answers)
+    newQuestions[qIndex].options[oIndex].isCorrect = !newQuestions[qIndex].options[oIndex].isCorrect;
     setQuestions(newQuestions);
   };
 
   const addQuestion = () => {
-    setQuestions([...questions, { text: '', options: ['', '', '', ''], correctAnswer: 0 }]);
+    setQuestions([...questions, { 
+      text: '', 
+      options: [
+        { text: '', isCorrect: false },
+        { text: '', isCorrect: false },
+        { text: '', isCorrect: false },
+        { text: '', isCorrect: false }
+      ]
+    }]);
   };
 
   const removeQuestion = (index: number) => {
@@ -72,7 +133,7 @@ export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
   const addOption = (qIndex: number) => {
     if (questions[qIndex].options.length < 5) {
       const newQuestions = [...questions];
-      newQuestions[qIndex].options.push('');
+      newQuestions[qIndex].options.push({ text: '', isCorrect: false });
       setQuestions(newQuestions);
     }
   };
@@ -81,9 +142,6 @@ export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
     if (questions[qIndex].options.length > 3) {
       const newQuestions = [...questions];
       newQuestions[qIndex].options.splice(oIndex, 1);
-      if (newQuestions[qIndex].correctAnswer >= newQuestions[qIndex].options.length) {
-        newQuestions[qIndex].correctAnswer = 0;
-      }
       setQuestions(newQuestions);
     }
   };
@@ -94,20 +152,33 @@ export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
     if (!title.trim()) {
       newErrors.push('Le titre est requis');
     }
-    if (selectedClasses.length === 0) {
-      newErrors.push('Sélectionnez au moins une classe');
+    if (!selectedClassId) {
+      newErrors.push('Sélectionnez une classe');
     }
-    if (timeLimit < 1 || timeLimit > 180) {
+    if (durationMinutes < 1 || durationMinutes > 180) {
       newErrors.push('Le temps limite doit être entre 1 et 180 minutes');
+    }
+    if (!openAt) {
+      newErrors.push('La date d\'ouverture est requise');
+    }
+    if (!closeAt) {
+      newErrors.push('La date de fermeture est requise');
+    }
+    if (openAt && closeAt && new Date(openAt) >= new Date(closeAt)) {
+      newErrors.push('La date de fermeture doit être après la date d\'ouverture');
     }
 
     questions.forEach((q, i) => {
       if (!q.text.trim()) {
         newErrors.push(`Question ${i + 1}: Le texte est requis`);
       }
-      const emptyOptions = q.options.filter(o => !o.trim()).length;
-      if (emptyOptions > 0) {
-        newErrors.push(`Question ${i + 1}: Toutes les options doivent être remplies`);
+      const validOptions = q.options.filter(o => o.text.trim());
+      if (validOptions.length < 2) {
+        newErrors.push(`Question ${i + 1}: Au moins 2 options sont requises`);
+      }
+      const hasCorrect = q.options.some(opt => opt.isCorrect && opt.text.trim());
+      if (!hasCorrect) {
+        newErrors.push(`Question ${i + 1}: Au moins une option correcte doit être sélectionnée`);
       }
     });
 
@@ -115,39 +186,52 @@ export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
     return newErrors.length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validateForm() || !user) return;
 
-    const newQuiz: Quiz = {
-      id: `quiz-${Date.now()}`,
+    setIsSubmitting(true);
+
+    // Convert questions to backend format
+    const questionsData = questions.map((q) => ({
+      text: q.text.trim(),
+      options: q.options
+        .filter(o => o.text.trim()) // Remove empty options
+        .map((opt) => ({
+          text: opt.text.trim(),
+          isCorrect: opt.isCorrect,
+        })),
+    }));
+
+    const quizData = {
       title: title.trim(),
       description: description.trim(),
-      timeLimit,
-      classIds: selectedClasses,
-      createdBy: user.id,
-      createdAt: new Date().toISOString().split('T')[0],
-      questions: questions.map((q, i) => ({
-        ...q,
-        id: `q-${Date.now()}-${i}`,
-        text: q.text.trim(),
-        options: q.options.map(o => o.trim()),
-      })),
+      durationMinutes,
+      openAt: new Date(openAt).toISOString(),
+      closeAt: new Date(closeAt).toISOString(),
+      questions: questionsData,
     };
 
-    addQuiz(newQuiz);
-    
-    // Reset form
-    setTitle('');
-    setDescription('');
-    setTimeLimit(15);
-    setSelectedClasses([]);
-    setQuestions([{ text: '', options: ['', '', '', ''], correctAnswer: 0 }]);
-    setErrors([]);
-
-    onCreated?.();
+    createQuizMutation.mutate(quizData);
   };
+
+  // Set default dates (open now, close in 7 days) on mount
+  useEffect(() => {
+    if (!openAt) {
+      const now = new Date();
+      now.setMinutes(0);
+      now.setSeconds(0);
+      setOpenAt(now.toISOString().slice(0, 16));
+    }
+    if (!closeAt) {
+      const in7Days = new Date();
+      in7Days.setDate(in7Days.getDate() + 7);
+      in7Days.setHours(23);
+      in7Days.setMinutes(59);
+      setCloseAt(in7Days.toISOString().slice(0, 16));
+    }
+  }, []);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -171,17 +255,17 @@ export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="timeLimit" className="flex items-center gap-2">
+              <Label htmlFor="durationMinutes" className="flex items-center gap-2">
                 <Clock className="w-4 h-4" />
-                Temps limite (minutes) *
+                Durée (minutes) *
               </Label>
               <Input
-                id="timeLimit"
+                id="durationMinutes"
                 type="number"
                 min={1}
                 max={180}
-                value={timeLimit}
-                onChange={(e) => setTimeLimit(parseInt(e.target.value) || 15)}
+                value={durationMinutes}
+                onChange={(e) => setDurationMinutes(parseInt(e.target.value) || 15)}
               />
             </div>
           </div>
@@ -195,25 +279,51 @@ export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
               rows={2}
             />
           </div>
-          <div className="space-y-2">
-            <Label>Classes assignées *</Label>
-            <div className="flex flex-wrap gap-3">
-              {classes.map(c => (
-                <label
-                  key={c.id}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer transition-all ${
-                    selectedClasses.includes(c.id)
-                      ? 'border-primary bg-primary/10'
-                      : 'border-border hover:border-primary/50'
-                  }`}
-                >
-                  <Checkbox
-                    checked={selectedClasses.includes(c.id)}
-                    onCheckedChange={() => handleClassToggle(c.id)}
-                  />
-                  <span className="text-sm font-medium">{c.name}</span>
-                </label>
-              ))}
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="classId">Classe assignée *</Label>
+              <Select value={selectedClassId} onValueChange={setSelectedClassId}>
+                <SelectTrigger id="classId">
+                  <SelectValue placeholder="Sélectionner une classe" />
+                </SelectTrigger>
+                <SelectContent>
+                  {isLoadingClasses ? (
+                    <SelectItem value="loading" disabled>Chargement...</SelectItem>
+                  ) : classes.length === 0 ? (
+                    <SelectItem value="none" disabled>Aucune classe disponible</SelectItem>
+                  ) : (
+                    classes.map(c => (
+                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="openAt" className="flex items-center gap-2">
+                <Calendar className="w-4 h-4" />
+                Date d'ouverture *
+              </Label>
+              <Input
+                id="openAt"
+                type="datetime-local"
+                value={openAt}
+                onChange={(e) => setOpenAt(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="closeAt" className="flex items-center gap-2">
+                <Calendar className="w-4 h-4" />
+                Date de fermeture *
+              </Label>
+              <Input
+                id="closeAt"
+                type="datetime-local"
+                value={closeAt}
+                onChange={(e) => setCloseAt(e.target.value)}
+              />
             </div>
           </div>
         </CardContent>
@@ -251,27 +361,24 @@ export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
               />
             </div>
             <div className="space-y-3">
-              <Label>Options (sélectionnez la bonne réponse)</Label>
+              <Label>Options (cochez une ou plusieurs bonnes réponses) *</Label>
               {question.options.map((option, oIndex) => (
                 <div key={oIndex} className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => handleCorrectAnswerChange(qIndex, oIndex)}
-                    className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-all ${
-                      question.correctAnswer === oIndex
-                        ? 'bg-success text-success-foreground'
-                        : 'bg-secondary hover:bg-secondary/80'
-                    }`}
-                  >
-                    {question.correctAnswer === oIndex ? (
-                      <CheckCircle className="w-4 h-4" />
-                    ) : (
-                      String.fromCharCode(65 + oIndex)
-                    )}
-                  </button>
+                  <Checkbox
+                    checked={option.isCorrect}
+                    onCheckedChange={() => handleCorrectAnswerChange(qIndex, oIndex)}
+                    className="shrink-0"
+                  />
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold shrink-0 ${
+                    option.isCorrect
+                      ? 'bg-success text-success-foreground'
+                      : 'bg-secondary text-foreground'
+                  }`}>
+                    {String.fromCharCode(65 + oIndex)}
+                  </div>
                   <Input
                     placeholder={`Option ${String.fromCharCode(65 + oIndex)}`}
-                    value={option}
+                    value={option.text}
                     onChange={(e) => handleOptionChange(qIndex, oIndex, e.target.value)}
                     className="flex-1"
                   />
@@ -333,9 +440,19 @@ export function CreateQuizForm({ onCreated }: CreateQuizFormProps) {
         type="submit" 
         className="w-full gradient-primary text-primary-foreground shadow-primary"
         size="lg"
+        disabled={isSubmitting || createQuizMutation.isPending}
       >
-        <CheckCircle className="w-5 h-5 mr-2" />
-        Créer le quiz
+        {isSubmitting || createQuizMutation.isPending ? (
+          <>
+            <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+            Création en cours...
+          </>
+        ) : (
+          <>
+            <CheckCircle className="w-5 h-5 mr-2" />
+            Créer le quiz
+          </>
+        )}
       </Button>
     </form>
   );

@@ -1,5 +1,7 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useQuiz } from '@/contexts/QuizContext';
+import { teacherApi } from '@/services/api';
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -41,12 +43,47 @@ import {
 import { exportResultsToPDF, exportDetailedResultsToPDF } from '@/utils/pdfExport';
 
 export function QuizResults() {
-  const { quizzes, students, classes, attempts, resetQuizForStudent } = useQuiz();
+  const { quizzes, students, classes, resetQuizForStudent } = useQuiz();
   const [selectedQuiz, setSelectedQuiz] = useState<string>('all');
   const [selectedClass, setSelectedClass] = useState<string>('all');
   const [expandedStudent, setExpandedStudent] = useState<string | null>(null);
 
+  // Fetch submissions for selected quiz (or all quizzes)
+  const { data: submissionsData = [], isLoading: isLoadingSubmissions, refetch: refetchSubmissions } = useQuery({
+    queryKey: ['submissions', selectedQuiz],
+    queryFn: async () => {
+      if (selectedQuiz === 'all') {
+        // Fetch submissions for all quizzes
+        const allSubmissions: any[] = [];
+        for (const quiz of quizzes) {
+          try {
+            const quizSubmissions = await teacherApi.getQuizSubmissions(quiz.id);
+            allSubmissions.push(...quizSubmissions);
+          } catch (error) {
+            console.error(`Failed to fetch submissions for quiz ${quiz.id}:`, error);
+          }
+        }
+        return allSubmissions;
+      } else {
+        // Fetch submissions for selected quiz
+        return await teacherApi.getQuizSubmissions(selectedQuiz);
+      }
+    },
+    enabled: quizzes.length > 0,
+    refetchOnWindowFocus: true, // Auto-refresh when window regains focus
+  });
+
   const handleExportPDF = () => {
+    // Convert submissions to attempts format for PDF export
+    const attempts = submissionsData.map((sub: any) => ({
+      id: sub.id,
+      quizId: sub.quizId,
+      studentId: sub.studentId,
+      answers: sub.answers || [],
+      completedAt: sub.submittedAt || sub.startedAt,
+      score: sub.score,
+    }));
+    
     exportResultsToPDF({
       quizzes,
       attempts,
@@ -60,6 +97,16 @@ export function QuizResults() {
   const handleExportQuizPDF = (quizId: string) => {
     const quiz = quizzes.find(q => q.id === quizId);
     if (quiz) {
+      const quizSubmissions = submissionsData.filter((sub: any) => sub.quizId === quizId);
+      const attempts = quizSubmissions.map((sub: any) => ({
+        id: sub.id,
+        quizId: sub.quizId,
+        studentId: sub.studentId,
+        answers: sub.answers || [],
+        completedAt: sub.submittedAt || sub.startedAt,
+        score: sub.score,
+      }));
+      
       exportDetailedResultsToPDF({
         quiz,
         attempts,
@@ -74,13 +121,22 @@ export function QuizResults() {
     selectedClass === 'all' || s.classId === selectedClass
   );
 
-  // Get quiz attempts for display
+  // Get submissions for a student (convert backend submissions to attempt format)
   const getStudentAttempts = (studentId: string) => {
-    return attempts.filter(a => {
-      const matchesStudent = a.studentId === studentId;
-      const matchesQuiz = selectedQuiz === 'all' || a.quizId === selectedQuiz;
-      return matchesStudent && matchesQuiz;
-    });
+    return submissionsData
+      .filter((sub: any) => {
+        const matchesStudent = sub.studentId === studentId;
+        const matchesQuiz = selectedQuiz === 'all' || sub.quizId === selectedQuiz;
+        return matchesStudent && matchesQuiz;
+      })
+      .map((sub: any) => ({
+        id: sub.id,
+        quizId: sub.quizId,
+        studentId: sub.studentId,
+        answers: sub.answers || [], // Backend format: [{ questionId, optionId }]
+        completedAt: sub.submittedAt || sub.startedAt,
+        score: sub.score,
+      }));
   };
 
   const getQuizById = (quizId: string) => quizzes.find(q => q.id === quizId);
@@ -126,15 +182,25 @@ export function QuizResults() {
         </Button>
       </div>
 
+      {/* Loading state */}
+      {isLoadingSubmissions && (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-muted-foreground">Chargement des résultats...</p>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Results List */}
-      {filteredStudents.length === 0 ? (
+      {!isLoadingSubmissions && filteredStudents.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
             <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
             <p className="text-muted-foreground">Aucun étudiant trouvé.</p>
           </CardContent>
         </Card>
-      ) : (
+      ) : !isLoadingSubmissions && (
         <div className="space-y-4">
           {filteredStudents.map((student, index) => {
             const studentAttempts = getStudentAttempts(student.id);
@@ -169,8 +235,13 @@ export function QuizResults() {
                           </div>
                           <div className="flex items-center gap-3">
                             <Badge variant="secondary">
-                              {studentAttempts.length} quiz passé(s)
+                              {studentAttempts.filter((a: any) => a.score !== null && a.score !== undefined).length} quiz complété(s)
                             </Badge>
+                            {studentAttempts.length > 0 && (
+                              <Badge variant="outline">
+                                {studentAttempts.length} tentative(s) totale(s)
+                              </Badge>
+                            )}
                             {isExpanded ? (
                               <ChevronUp className="w-5 h-5 text-muted-foreground" />
                             ) : (
@@ -253,8 +324,31 @@ export function QuizResults() {
                                   {/* Questions & Answers */}
                                   <div className="space-y-3">
                                     {quiz.questions.map((question, qIndex) => {
-                                      const studentAnswer = attempt.answers[qIndex];
-                                      const isCorrect = studentAnswer === question.correctAnswer;
+                                      // Find the answer for this question
+                                      const answer = Array.isArray(attempt.answers) 
+                                        ? attempt.answers.find((a: any) => 
+                                            a.questionId === question.id || 
+                                            (typeof a === 'object' && a.questionId === question.id)
+                                          )
+                                        : null;
+                                      
+                                      // Handle both formats: { questionId, optionId } or index
+                                      let selectedOptionId: string | null = null;
+                                      let selectedOptionIndex: number = -1;
+                                      
+                                      if (answer) {
+                                        if (typeof answer === 'object' && answer.optionId) {
+                                          selectedOptionId = answer.optionId;
+                                          selectedOptionIndex = question.options.findIndex(opt => opt.id === answer.optionId);
+                                        } else if (typeof answer === 'number') {
+                                          selectedOptionIndex = answer;
+                                          selectedOptionId = question.options[answer]?.id || null;
+                                        }
+                                      }
+                                      
+                                      // Check if correct (find correct option)
+                                      const correctOption = question.options.find(opt => opt.isCorrect);
+                                      const isCorrect = selectedOptionId === correctOption?.id;
 
                                       return (
                                         <div 
@@ -279,14 +373,14 @@ export function QuizResults() {
                                                 <p className="text-muted-foreground">
                                                   Réponse de l'étudiant :{' '}
                                                   <span className={isCorrect ? 'text-success' : 'text-destructive'}>
-                                                    {studentAnswer >= 0 && studentAnswer < question.options.length 
-                                                      ? question.options[studentAnswer]
+                                                    {selectedOptionIndex >= 0 && selectedOptionIndex < question.options.length
+                                                      ? question.options[selectedOptionIndex].text
                                                       : 'Non répondu'}
                                                   </span>
                                                 </p>
-                                                {!isCorrect && (
+                                                {!isCorrect && correctOption && (
                                                   <p className="text-success">
-                                                    Bonne réponse : {question.options[question.correctAnswer]}
+                                                    Bonne réponse : {correctOption.text}
                                                   </p>
                                                 )}
                                               </div>
