@@ -51,9 +51,18 @@ export function QuizList({ onEditQuiz }: QuizListProps) {
   }
 
   const getClassNames = (classIds: string[]) => {
+    if (!classIds || classIds.length === 0) {
+      // Legacy support: try classId
+      return [];
+    }
     return classIds
-      .map(id => classes.find(c => c.id === id)?.name || 'Classe inconnue')
-      .join(', ');
+      .map(id => {
+        // Convert both to strings for comparison to handle type mismatches
+        const classIdStr = String(id);
+        const foundClass = classes.find(c => String(c.id) === classIdStr);
+        return foundClass?.name;
+      })
+      .filter(Boolean) as string[];
   };
 
   if (quizzes.length === 0) {
@@ -120,7 +129,13 @@ export function QuizList({ onEditQuiz }: QuizListProps) {
                           <AlertDialogFooter>
                             <AlertDialogCancel>Annuler</AlertDialogCancel>
                             <AlertDialogAction 
-                              onClick={() => deleteQuiz(quiz.id)}
+                              onClick={async () => {
+                                try {
+                                  await deleteQuiz(quiz.id);
+                                } catch (error) {
+                                  alert('Erreur lors de la suppression du quiz: ' + (error instanceof Error ? error.message : 'Erreur inconnue'));
+                                }
+                              }}
                               className="bg-destructive text-destructive-foreground"
                             >
                               Supprimer
@@ -134,11 +149,24 @@ export function QuizList({ onEditQuiz }: QuizListProps) {
               </CardHeader>
               <CardContent>
                 <div className="flex flex-wrap gap-2 mb-4">
-                  {quiz.classIds.map(classId => (
-                    <Badge key={classId} variant="secondary" className="text-xs">
-                      {classes.find(c => c.id === classId)?.name}
-                    </Badge>
-                  ))}
+                  {(() => {
+                    const classIds = quiz.classIds || (quiz.classId ? [quiz.classId] : []);
+                    const classNames = getClassNames(classIds);
+                    
+                    if (classNames.length > 0) {
+                      return classNames.map((className, idx) => (
+                        <Badge key={idx} variant="secondary" className="text-xs">
+                          {className}
+                        </Badge>
+                      ));
+                    } else {
+                      return (
+                        <Badge variant="secondary" className="text-xs text-muted-foreground">
+                          Aucune classe assignée
+                        </Badge>
+                      );
+                    }
+                  })()}
                 </div>
 
                 <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
@@ -148,7 +176,7 @@ export function QuizList({ onEditQuiz }: QuizListProps) {
                   </div>
                   <div className="flex items-center gap-1">
                     <Clock className="w-4 h-4" />
-                    {quiz.timeLimit} min
+                    {quiz.durationMinutes || quiz.timeLimit || 0} min
                   </div>
                 </div>
 

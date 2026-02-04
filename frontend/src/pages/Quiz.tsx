@@ -13,7 +13,7 @@ export default function QuizPage() {
     );
   }
 
-  if (!user || user.role !== 'student') {
+  if (!user || user.role !== 'STUDENT') {
     return <Navigate to="/login" replace />;
   }
 

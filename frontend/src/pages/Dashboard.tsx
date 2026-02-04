@@ -18,7 +18,7 @@ export default function DashboardPage() {
     return <Navigate to="/login" replace />;
   }
 
-  if (user.role === 'admin') {
+  if (user.role === 'TEACHER') {
     return <AdminDashboard />;
   }
 

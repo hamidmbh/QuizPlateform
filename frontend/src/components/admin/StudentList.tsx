@@ -1,5 +1,7 @@
 import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useQuiz } from '@/contexts/QuizContext';
+import { teacherApi } from '@/services/api';
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,7 +13,11 @@ import {
   Trash2, 
   PlusCircle,
   Search,
-  Filter
+  Filter,
+  Edit,
+  Loader2,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import {
   Select,
@@ -43,15 +49,72 @@ import {
 import { User } from '@/types/quiz';
 
 export function StudentList() {
-  const { students, classes, addStudent, deleteStudent } = useQuiz();
+  const { students, classes, refetchStudents } = useQuiz();
+  const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
   const [filterClass, setFilterClass] = useState<string>('all');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingStudent, setEditingStudent] = useState<User | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   // New student form
   const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [newClassId, setNewClassId] = useState('');
+
+  // Create student mutation
+  const createStudentMutation = useMutation({
+    mutationFn: async (data: { name: string; email: string; password: string; classId: string }) => {
+      return await teacherApi.createStudent(data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['students'] });
+      queryClient.invalidateQueries({ queryKey: ['classes'] }); // Refresh class student count
+      setNewName('');
+      setNewEmail('');
+      setNewPassword('');
+      setNewClassId('');
+      setIsDialogOpen(false);
+    },
+    onError: (error: any) => {
+      console.error('Failed to create student:', error);
+      alert('Erreur lors de la création de l\'étudiant: ' + (error.message || 'Erreur inconnue'));
+    },
+  });
+
+  // Update student mutation
+  const updateStudentMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      return await teacherApi.updateStudent(id, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['students'] });
+      queryClient.invalidateQueries({ queryKey: ['classes'] }); // Refresh class student count
+      setEditingStudent(null);
+      setNewPassword('');
+      setShowPassword(false);
+    },
+    onError: (error: any) => {
+      console.error('Failed to update student:', error);
+      alert('Erreur lors de la mise à jour: ' + (error.message || 'Erreur inconnue'));
+    },
+  });
+
+  // Delete student mutation
+  const deleteStudentMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return await teacherApi.deleteStudent(id);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['students'] });
+      queryClient.invalidateQueries({ queryKey: ['classes'] }); // Refresh class student count
+    },
+    onError: (error: any) => {
+      console.error('Failed to delete student:', error);
+      alert('Erreur lors de la suppression: ' + (error.message || 'Erreur inconnue'));
+    },
+  });
 
   const filteredStudents = students.filter(student => {
     const matchesSearch = student.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -61,23 +124,54 @@ export function StudentList() {
   });
 
   const handleAddStudent = () => {
-    if (!newName.trim() || !newEmail.trim() || !newClassId) {
+    if (!newName.trim() || !newEmail.trim() || !newPassword.trim() || !newClassId) {
+      alert('Veuillez remplir tous les champs');
       return;
     }
 
-    const newStudent: User = {
-      id: `student-${Date.now()}`,
+    createStudentMutation.mutate({
       name: newName.trim(),
       email: newEmail.trim(),
-      role: 'student',
+      password: newPassword,
       classId: newClassId,
+    });
+  };
+
+  const handleEditStudent = (student: User) => {
+    setEditingStudent(student);
+    setNewName(student.name);
+    setNewEmail(student.email);
+    setNewPassword('');
+    setNewClassId(student.classId || '');
+    setShowPassword(false);
+  };
+
+  const handleUpdateStudent = () => {
+    if (!editingStudent) return;
+
+    const updateData: any = {
+      name: newName.trim(),
+      email: newEmail.trim(),
     };
 
-    addStudent(newStudent);
-    setNewName('');
-    setNewEmail('');
-    setNewClassId('');
-    setIsDialogOpen(false);
+    if (newPassword.trim()) {
+      updateData.password = newPassword;
+    }
+
+    if (newClassId) {
+      updateData.classId = newClassId;
+    }
+
+    updateStudentMutation.mutate({
+      id: editingStudent.id,
+      data: updateData,
+    });
+  };
+
+  const handleDeleteStudent = (studentId: string) => {
+    if (confirm('Êtes-vous sûr de vouloir supprimer cet étudiant ?')) {
+      deleteStudentMutation.mutate(studentId);
+    }
   };
 
   return (
@@ -122,7 +216,7 @@ export function StudentList() {
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Nom complet</Label>
+                <Label htmlFor="name">Nom complet *</Label>
                 <Input
                   id="name"
                   placeholder="Jean Dupont"
@@ -131,7 +225,7 @@ export function StudentList() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">Email *</Label>
                 <Input
                   id="email"
                   type="email"
@@ -141,7 +235,30 @@ export function StudentList() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="class">Classe</Label>
+                <Label htmlFor="password">Mot de passe *</Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="pr-10"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-0 top-0 h-full"
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">Minimum 6 caractères</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="class">Classe *</Label>
                 <Select value={newClassId} onValueChange={setNewClassId}>
                   <SelectTrigger>
                     <SelectValue placeholder="Sélectionner une classe" />
@@ -153,9 +270,6 @@ export function StudentList() {
                   </SelectContent>
                 </Select>
               </div>
-              <p className="text-sm text-muted-foreground">
-                Mot de passe par défaut : <code className="bg-secondary px-2 py-1 rounded">student123</code>
-              </p>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
@@ -164,14 +278,110 @@ export function StudentList() {
               <Button 
                 onClick={handleAddStudent}
                 className="gradient-primary text-primary-foreground"
-                disabled={!newName.trim() || !newEmail.trim() || !newClassId}
+                disabled={!newName.trim() || !newEmail.trim() || !newPassword.trim() || !newClassId || createStudentMutation.isPending}
               >
-                Ajouter
+                {createStudentMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Création...
+                  </>
+                ) : (
+                  'Ajouter'
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
+
+      {/* Edit Student Dialog */}
+      <Dialog open={!!editingStudent} onOpenChange={(open) => !open && setEditingStudent(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Modifier l'étudiant</DialogTitle>
+            <DialogDescription>
+              Modifiez les informations de l'étudiant.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-name">Nom complet *</Label>
+              <Input
+                id="edit-name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-email">Email *</Label>
+              <Input
+                id="edit-email"
+                type="email"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-password">Nouveau mot de passe</Label>
+              <div className="relative">
+                <Input
+                  id="edit-password"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="Laisser vide pour ne pas changer"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="pr-10"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 h-full"
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">Laisser vide pour conserver le mot de passe actuel</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-class">Classe *</Label>
+              <Select value={newClassId} onValueChange={setNewClassId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Sélectionner une classe" />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border border-border shadow-lg">
+                  {classes.map(c => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingStudent(null)}>
+              Annuler
+            </Button>
+            <Button 
+              onClick={handleUpdateStudent}
+              className="gradient-primary text-primary-foreground"
+              disabled={!newName.trim() || !newEmail.trim() || updateStudentMutation.isPending}
+            >
+              {updateStudentMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Enregistrement...
+                </>
+              ) : (
+                <>
+                  <Edit className="w-4 h-4 mr-2" />
+                  Enregistrer
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Student List */}
       {filteredStudents.length === 0 ? (
@@ -208,9 +418,18 @@ export function StudentList() {
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <Badge variant="secondary">
-                          {studentClass?.name || 'Non assigné'}
-                        </Badge>
+                        {studentClass?.name && (
+                          <Badge variant="secondary">
+                            {studentClass.name}
+                          </Badge>
+                        )}
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          onClick={() => handleEditStudent(student)}
+                        >
+                          <Edit className="w-4 h-4" />
+                        </Button>
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
                             <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
@@ -227,7 +446,7 @@ export function StudentList() {
                             <AlertDialogFooter>
                               <AlertDialogCancel>Annuler</AlertDialogCancel>
                               <AlertDialogAction 
-                                onClick={() => deleteStudent(student.id)}
+                                onClick={() => handleDeleteStudent(student.id)}
                                 className="bg-destructive text-destructive-foreground"
                               >
                                 Supprimer
