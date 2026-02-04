@@ -104,6 +104,17 @@ export const authApi = {
   },
 
   /**
+   * Update current user profile (name, email, optional password)
+   * PUT /me
+   */
+  updateProfile: async (data: { name: string; email: string; password?: string; password_confirmation?: string }): Promise<any> => {
+    return apiRequest<any>('/me', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  /**
    * Logout (clear token)
    */
   logout: (): void => {

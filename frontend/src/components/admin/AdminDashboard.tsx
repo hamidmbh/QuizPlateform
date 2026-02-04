@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Link } from 'react-router-dom';
 import { 
   GraduationCap, 
   LogOut, 
@@ -13,7 +14,8 @@ import {
   Users, 
   PlusCircle,
   BarChart3,
-  School
+  School,
+  User
 } from 'lucide-react';
 import { QuizList } from './QuizList';
 import { StudentList } from './StudentList';
@@ -48,10 +50,14 @@ export function AdminDashboard() {
             <span className="text-gradient">QuizMaster</span>
             <span className="text-muted-foreground text-sm font-normal ml-2">Admin</span>
           </div>
-          <div className="flex items-center gap-4">
-            <span className="text-muted-foreground hidden sm:inline">
-              <span className="text-foreground font-medium">{user.name}</span>
-            </span>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/dashboard/profile"
+              className="flex items-center gap-2 text-muted-foreground hover:text-foreground text-sm px-3 py-2 rounded-lg hover:bg-secondary/50 transition-colors"
+            >
+              <User className="w-4 h-4" />
+              <span className="hidden sm:inline font-medium">{user.name}</span>
+            </Link>
             <Button variant="ghost" size="icon" onClick={handleLogout}>
               <LogOut className="w-5 h-5" />
             </Button>

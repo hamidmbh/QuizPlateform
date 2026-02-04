@@ -69,6 +69,39 @@ class AuthController extends Controller
     }
 
     /**
+     * Update current user profile (name, email, optional password)
+     * PUT /api/me
+     */
+    public function updateProfile(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|unique:users,email,' . $user->id,
+            'password' => 'nullable|string|min:8|confirmed',
+        ]);
+
+        $user->name = $validated['name'];
+        $user->email = $validated['email'];
+        if (!empty($validated['password'])) {
+            $user->password = Hash::make($validated['password']);
+        }
+        $user->save();
+
+        $payload = [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => $user->role,
+        ];
+        if ($user->role === 'TEACHER') {
+            $payload['classId'] = $user->class_id;
+        }
+        return response()->json($payload);
+    }
+
+    /**
      * Logout (revoke token)
      * POST /api/auth/logout
      */
