@@ -52,9 +52,9 @@ export function Navbar() {
 
           {/* Auth Buttons */}
           <div className="hidden md:flex items-center gap-4">
-            <Link to="/login">
+            {/* <Link to="/login">
               <Button variant="ghost">Connexion</Button>
-            </Link>
+            </Link> */}
             <Link to="/login">
               <Button className="gradient-primary text-primary-foreground shadow-primary hover:opacity-90 transition-opacity">
                 Commencer

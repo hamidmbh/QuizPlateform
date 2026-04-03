@@ -20,8 +20,8 @@ class DatabaseSeeder extends Seeder
         // Create a teacher
         $teacher = User::create([
             'name' => 'Professor Smith',
-            'email' => 'teacher@example.com',
-            'password' => Hash::make('password'),
+            'email' => 'professeur@quiz.com',
+            'password' => Hash::make('@dm!n#2024!profess'),
             'role' => 'TEACHER',
         ]);
 
@@ -34,7 +34,7 @@ class DatabaseSeeder extends Seeder
         // Create students
         $student1 = User::create([
             'name' => 'John Doe',
-            'email' => 'student1@example.com',
+            'email' => 'student1@quiz.com',
             'password' => Hash::make('password'),
             'role' => 'STUDENT',
             'class_id' => $class->id,
@@ -42,7 +42,7 @@ class DatabaseSeeder extends Seeder
 
         $student2 = User::create([
             'name' => 'Jane Smith',
-            'email' => 'student2@example.com',
+            'email' => 'student2@quiz.com',
             'password' => Hash::make('password'),
             'role' => 'STUDENT',
             'class_id' => $class->id,

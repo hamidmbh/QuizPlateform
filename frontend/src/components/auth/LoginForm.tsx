@@ -128,14 +128,6 @@ export function LoginForm() {
                   >
                     {isLoading ? 'Connexion...' : 'Se connecter'}
                   </Button>
-
-                  <button
-                    type="button"
-                    onClick={() => fillDemoCredentials('student')}
-                    className="w-full text-sm text-muted-foreground hover:text-primary transition-colors"
-                  >
-                    Utiliser les identifiants de démo
-                  </button>
                 </form>
               </TabsContent>
 
@@ -176,14 +168,6 @@ export function LoginForm() {
                   >
                     {isLoading ? 'Connexion...' : 'Se connecter'}
                   </Button>
-
-                  <button
-                    type="button"
-                    onClick={() => fillDemoCredentials('admin')}
-                    className="w-full text-sm text-muted-foreground hover:text-primary transition-colors"
-                  >
-                    Utiliser les identifiants de démo
-                  </button>
                 </form>
               </TabsContent>
             </Tabs>
